@@ -51,3 +51,24 @@ class XHHbbWW(ProcessCustomization):
             "X_HH_bbWW",
             "fragment.py",
         )
+
+    def gridpack_name(self, point):
+        return f"Radion_hh_narrow_M{point.params['mass']}"
+
+    def render_gridpack_cards(self, point, out_dir):
+        name = self.gridpack_name(point)
+        mass = point.params["mass"]
+        tpl_dir = os.path.join(
+            os.environ["ANALYSIS_PATH"],
+            "config",
+            "process_templates",
+            "X_HH_bbWW",
+            "cards",
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        for card in ("proc_card", "run_card", "customizecards", "extramodels"):
+            with open(os.path.join(tpl_dir, f"{card}.dat")) as f:
+                text = f.read().replace("__NAME__", name).replace("__MASS__", str(mass))
+            with open(os.path.join(out_dir, f"{name}_{card}.dat"), "w") as f:
+                f.write(text)
+        return name

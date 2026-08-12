@@ -10,6 +10,7 @@ added in later phases and reuse these bases.
 
 import contextlib
 import copy
+import glob
 import math
 import os
 import shutil
@@ -20,7 +21,12 @@ import luigi
 import yaml
 
 from . import registry, run_step
-from .tools import CreateVomsProxy, timed_call_wrapper, update_kerberos_ticket
+from .tools import (
+    CreateVomsProxy,
+    ps_call,
+    timed_call_wrapper,
+    update_kerberos_ticket,
+)
 
 law.contrib.load("htcondor")
 law.contrib.load("wlcg")
@@ -205,7 +211,7 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
 
 
 class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
-    """Provide the gridpack for each point: import an existing one, or generate (Phase 5)."""
+    """Provide the gridpack for each point: import an existing one, or generate a new one."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
 
@@ -225,7 +231,36 @@ class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
             ) as out_local:
                 shutil.copy(local_src.abspath, out_local.abspath)
         else:
-            raise NotImplementedError("gridpack generation is Phase 5")
+            self._generate(spec)
+
+    def _generate(self, spec):
+        """Render the process cards and run genproductions_scripts gridpack_generation.sh."""
+        point = self.branch_data
+        work_dir, is_tmp = self.law_job_home()
+        try:
+            cards_dir = os.path.join(work_dir, "cards")
+            name = self.process.render_gridpack_cards(point, cards_dir)
+            gen_sh = os.path.join(
+                self.ana_path(),
+                "genproductions_scripts",
+                "bin",
+                spec.generator,
+                "gridpack_generation.sh",
+            )
+            ps_call(
+                [f"bash {gen_sh} {name} {cards_dir}"],
+                shell=True,
+                cwd=work_dir,
+                verbose=1,
+            )
+            tarballs = glob.glob(os.path.join(work_dir, f"{name}_*_tarball.tar.xz"))
+            if not tarballs:
+                raise RuntimeError(f"gridpack tarball not produced for {name}")
+            with self.output().localize("w") as out_local:
+                shutil.copy(tarballs[0], out_local.abspath)
+        finally:
+            if is_tmp:
+                shutil.rmtree(work_dir, ignore_errors=True)
 
 
 class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):

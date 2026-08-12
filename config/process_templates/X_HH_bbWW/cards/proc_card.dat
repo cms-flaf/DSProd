@@ -1,0 +1,27 @@
+#************************************************************
+#*                     MadGraph5_aMC@NLO                    *
+#************************************************************
+#* Command File for MadGraph5_aMC@NLO                       *
+#* Extracted from the central Radion_hh_narrow gridpack;    *
+#* __NAME__ is substituted per production point by DSProd.  *
+#************************************************************
+set low_mem_multicore_nlo_generation False
+set loop_optimized_output True
+set loop_color_flows False
+set max_npoint_for_channel 0
+set default_unset_couplings 99
+set max_t_for_channel 99
+set zerowidth_tchannel True
+set group_subprocesses Auto
+set ignore_six_quark_processes False
+set gauge unitary
+set complex_mass_scheme False
+import model heft_radion
+define j = g u c d s u~ c~ d~ s~
+define l+ = e+ mu+
+define l- = e- mu-
+define vl = ve vm vt
+define vl~ = ve~ vm~ vt~
+define p = g u c d s u~ c~ d~ s~
+generate p p > h2, ( h2 > H H )
+output __NAME__ -nojpeg

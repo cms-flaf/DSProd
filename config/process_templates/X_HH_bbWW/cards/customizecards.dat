@@ -1,0 +1,5 @@
+# Per-point customization for the narrow-radion HH mass scan.
+# Only the resonance mass changes across points; the width is fixed to the narrow value
+# (1 MeV) as in the central Radion_hh_narrow production. __MASS__ is substituted by DSProd.
+set param_card mass 35 __MASS__
+set param_card decay 35 0.001

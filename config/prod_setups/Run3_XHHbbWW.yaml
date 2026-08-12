@@ -22,10 +22,10 @@ events_per_job: 2000
 files_per_merge: 25 # NanoMergeTask groups (Phase 4)
 
 points:
-  # `gridpack:` (existing mode) must point at the real M-800 gridpack tarball; obtain the path
-  # from the signal's genproductions gridpack storage (or McM). Without it, generate mode (Phase 5).
+  # `gridpack:` set -> existing mode (import the central cvmfs gridpack). Remove it to generate
+  # from the cards template (config/process_templates/X_HH_bbWW/cards) via genproductions_scripts.
   - name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-800
     mass: 800
     spin: 0
     events_total: 100000
-    # gridpack: davs://eosuser.cern.ch:443/eos/user/.../M-800_gridpack.tar.xz
+    gridpack: /cvmfs/cms.cern.ch/phys_generator/gridpacks/RunIII/13p6TeV/slc7_amd64_gcc10/MadGraph5_aMCatNLO/GF_HH_Spin0/Radion_hh_narrow_M800_slc7_amd64_gcc10_CMSSW_12_4_8_tarball.tar.xz

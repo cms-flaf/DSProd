@@ -68,6 +68,18 @@ class ProcessCustomization(ABC):
     def point_name(self, point: Point) -> str:
         return point.name
 
+    def gridpack_name(self, point: Point) -> str:
+        """Name for the generated gridpack / genproductions process (generate mode)."""
+        return self.point_name(point)
+
+    def render_gridpack_cards(self, point: Point, out_dir: str) -> str:
+        """Render the genproductions input cards for `point` into out_dir (generate mode).
+
+        Writes `<NAME>_proc_card.dat` / `_run_card.dat` / `_customizecards.dat` /
+        `_extramodels.dat` and returns NAME (== the proc_card `output` name). Default: unsupported.
+        """
+        raise NotImplementedError(f"{self.name} does not support gridpack generation")
+
     def xsec(self, point: Point) -> Optional[float]:
         return None
 
