@@ -1,0 +1,31 @@
+# Production setup: X->HH->bbWW resonant signal, Run3.
+process: X_HH_bbWW
+conditions: config/conditions_Run3.yaml
+
+# output root (FLAF consumes <storage>/nanoAOD_<version>/<era>/<process>/<point>/nano_<version>_<n>.root)
+storage: davs://eosuser.cern.ch:443/eos/user/k/kandroso/DSProd/XHHbbWW
+
+eras: [Run3_2022EE]
+
+# NanoAOD versions to produce per era (v12+v15 for 22-23BPix; v15-only for 2024)
+nano_versions:
+  Run3_2022: [v12, v15]
+  Run3_2022EE: [v12, v15]
+  Run3_2023: [v12, v15]
+  Run3_2023BPix: [v12, v15]
+  Run3_2024: [v15]
+
+first_step: LHEGS
+last_step: NANO
+
+events_per_job: 2000
+files_per_merge: 25 # NanoMergeTask groups (Phase 4)
+
+points:
+  # `gridpack:` (existing mode) must point at the real M-800 gridpack tarball; obtain the path
+  # from the signal's genproductions gridpack storage (or McM). Without it, generate mode (Phase 5).
+  - name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-800
+    mass: 800
+    spin: 0
+    events_total: 100000
+    # gridpack: davs://eosuser.cern.ch:443/eos/user/.../M-800_gridpack.tar.xz

@@ -8,17 +8,19 @@ The concrete production tasks (MakeGridpack, RunProd, NanoMergeTask, MakeManifes
 added in later phases and reuse these bases.
 """
 
+import contextlib
 import copy
 import math
 import os
+import shutil
 import tempfile
 
 import law
 import luigi
 import yaml
 
-from . import registry
-from .tools import timed_call_wrapper, update_kerberos_ticket
+from . import registry, run_step
+from .tools import CreateVomsProxy, timed_call_wrapper, update_kerberos_ticket
 
 law.contrib.load("htcondor")
 law.contrib.load("wlcg")
@@ -185,3 +187,103 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
             ("error", os.path.join(log_path, "job.$(ClusterId).$(ProcId).err"))
         )
         return config
+
+
+class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
+    """Provide the gridpack for each point: import an existing one, or generate (Phase 5)."""
+
+    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
+
+    def create_branch_map(self):
+        return {i: point for i, point in enumerate(self.points)}
+
+    def output(self):
+        name = self.process.point_name(self.branch_data)
+        return self.storage_target("gridpacks", name, "gridpack.tar.xz")
+
+    def run(self):
+        spec = self.process.gridpack(self.branch_data)
+        if spec.mode == "existing":
+            src = self.target(spec.location)
+            with src.localize("r") as local_src, self.output().localize(
+                "w"
+            ) as out_local:
+                shutil.copy(local_src.abspath, out_local.abspath)
+        else:
+            raise NotImplementedError("gridpack generation is Phase 5")
+
+
+class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
+    """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
+
+    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 24.0)
+    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
+
+    def create_branch_map(self):
+        branches = {}
+        bid = 0
+        for era in self.eras:
+            for pi, point in enumerate(self.points):
+                n_jobs = math.ceil(point.events_total / point.events_per_job)
+                for job in range(n_jobs):
+                    branches[bid] = (era, pi, job + 1)  # seed = 1-based job index
+                    bid += 1
+        return branches
+
+    def workflow_requires(self):
+        return {
+            "voms": CreateVomsProxy.req(self),
+            "gridpack": MakeGridpack.req(self, workflow="local"),
+        }
+
+    def requires(self):
+        _, pi, _ = self.branch_data
+        return {
+            "voms": CreateVomsProxy.req(self),
+            "gridpack": MakeGridpack.req(self, branch=pi, workflow="local"),
+        }
+
+    def _staged_target(self, era, point, version, seed):
+        name = self.process.point_name(point)
+        return self.storage_target(
+            "staging", f"nanoAOD_{version}", era, name, f"nano_{version}_{seed}.root"
+        )
+
+    def output(self):
+        era, pi, seed = self.branch_data
+        point = self.points[pi]
+        return {
+            v: self._staged_target(era, point, v, seed) for v in self.nano_versions(era)
+        }
+
+    def run(self):
+        era, pi, seed = self.branch_data
+        point = self.points[pi]
+        fragment = self.process.gen_fragment(point, era)
+        n_evt = point.events_per_job
+        with contextlib.ExitStack() as stack:
+            gridpack = stack.enter_context(
+                self.input()["gridpack"].localize("r")
+            ).abspath
+            work_dir, is_tmp = self.law_job_home()
+            try:
+                miniaod = run_step.run_chain(
+                    self.conditions,
+                    era,
+                    self.prod_setup.get("first_step"),
+                    "MINIAOD",
+                    seed,
+                    n_evt,
+                    work_dir,
+                    gridpack=gridpack,
+                    fragment_path=fragment,
+                )
+                for version in self.nano_versions(era):
+                    nano_out = run_step.run_nano(
+                        self.conditions, era, version, seed, n_evt, work_dir, miniaod
+                    )
+                    with self.output()[version].localize("w") as out_local:
+                        shutil.copy(nano_out, out_local.abspath)
+            finally:
+                if is_tmp:
+                    shutil.rmtree(work_dir, ignore_errors=True)

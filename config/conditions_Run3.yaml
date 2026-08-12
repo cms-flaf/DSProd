@@ -1,0 +1,182 @@
+# Per-era, per-step production conditions (gridpack -> NanoAOD).
+#
+# Sourced from the CMS McM public REST API (2026-08-12):
+#   DR/MiniAOD/NANO conditions from the standard central TT/DY chains (canonical per campaign);
+#   GS (LHE,GEN,SIM) conditions are campaign-standard (GT == DR GT, beamspot from the campaign).
+# Values confirmed exact for Run3_2022EE (from the reachable chain requests). Fields flagged
+# `# VERIFY` are inferred by pattern and should be checked against the era's own McM chain before
+# the first real production in that era.
+#
+# Step resolution (see dsprod/run_step.py): merge  default  +  default_step[STEP]
+#   +  <era>.default  +  <era>[STEP].  The final NANO step carries a `versions:` map, one entry
+# per NanoAOD version to produce; each is resolved the same way on top of the NANO defaults.
+
+default:
+  comEnergy: 13600
+  geometry: DB:Extended
+  era: Run3
+  OS_VERSION: el8 # all releases are run via the cmssw-el8 container on AlmaLinux9 workers
+  customise:
+    - Configuration/DataProcessing/Utils.addMonitoring
+
+default_step:
+  LHEGS:
+    step: LHE,GEN,SIM
+    eventcontent: RAWSIM,LHE
+    datatier: GEN-SIM,LHE
+  DIGIPremixHLT:
+    eventcontent: PREMIXRAW
+    datatier: GEN-SIM-RAW
+    datamix: PreMix
+    procModifiers: premix_stage2,siPixelQualityRawToDigi
+  RECO:
+    step: RAW2DIGI,L1Reco,RECO,RECOSIM
+    eventcontent: AODSIM
+    datatier: AODSIM
+    procModifiers: siPixelQualityRawToDigi
+  MINIAOD:
+    step: PAT
+    eventcontent: MINIAODSIM
+    datatier: MINIAODSIM
+  NANO:
+    step: NANO
+    eventcontent: NANOEDMAODSIM
+    datatier: NANOAODSIM
+
+# ---------------------------------------------------------------------------------------------
+Run3_2022:
+  prod_steps: [LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO]
+  default:
+    SCRAM_ARCH: el8_amd64_gcc10
+    CMSSW: CMSSW_12_4_11_patch3
+    GlobalTag: 124X_mcRun3_2022_realistic_v12
+  LHEGS:
+    beamspot: Realistic25ns13p6TeVEarly2022Collision
+  DIGIPremixHLT:
+    step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2022v12
+    pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer22_124X_mcRun3_2022_realistic_v11-v2/PREMIX"
+  MINIAOD:
+    SCRAM_ARCH: el8_amd64_gcc11
+    CMSSW: CMSSW_13_0_13
+    GlobalTag: 130X_mcRun3_2022_realistic_v5
+    era: Run3,run3_miniAOD_12X
+  NANO:
+    GlobalTag: 130X_mcRun3_2022_realistic_v5
+    versions:
+      v12:
+        SCRAM_ARCH: el8_amd64_gcc11
+        CMSSW: CMSSW_13_0_13
+        GlobalTag: 130X_mcRun3_2022_realistic_v5
+        era: Run3
+      v15:
+        SCRAM_ARCH: el8_amd64_gcc12
+        CMSSW: CMSSW_15_0_15_patch4
+        GlobalTag: 150X_mcRun3_2022_realistic_v1
+        era: Run3,run3_nanoAOD_pre142X
+
+Run3_2022EE:
+  prod_steps: [LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO]
+  default:
+    SCRAM_ARCH: el8_amd64_gcc10
+    CMSSW: CMSSW_12_4_11_patch3 # signal chain used 12_4_16; TT/DY reference uses 12_4_11_patch3 (same GT)
+    GlobalTag: 124X_mcRun3_2022_realistic_postEE_v1
+  LHEGS:
+    beamspot: Realistic25ns13p6TeVEarly2022Collision
+  DIGIPremixHLT:
+    step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2022v14
+    pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer22_124X_mcRun3_2022_realistic_v11-v2/PREMIX"
+  MINIAOD:
+    SCRAM_ARCH: el8_amd64_gcc11
+    CMSSW: CMSSW_13_0_13
+    GlobalTag: 130X_mcRun3_2022_realistic_postEE_v6
+    era: Run3,run3_miniAOD_12X
+  NANO:
+    versions:
+      v12:
+        SCRAM_ARCH: el8_amd64_gcc11
+        CMSSW: CMSSW_13_0_13
+        GlobalTag: 130X_mcRun3_2022_realistic_postEE_v6
+        era: Run3
+      v15:
+        SCRAM_ARCH: el8_amd64_gcc12
+        CMSSW: CMSSW_15_0_15_patch4
+        GlobalTag: 150X_mcRun3_2022_realistic_postEE_v1
+        era: Run3,run3_nanoAOD_pre142X
+
+Run3_2023:
+  prod_steps: [LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO]
+  default:
+    SCRAM_ARCH: el8_amd64_gcc11
+    CMSSW: CMSSW_13_0_14
+    GlobalTag: 130X_mcRun3_2023_realistic_v14
+  LHEGS:
+    beamspot: Realistic25ns13p6TeVEarly2023Collision # VERIFY (Run3Summer23 GS beamspot)
+  DIGIPremixHLT:
+    step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2023v12
+    pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer23_130X_mcRun3_2023_realistic_v13-v1/PREMIX"
+  MINIAOD:
+    GlobalTag: 130X_mcRun3_2023_realistic_v14
+    era: Run3,run3_miniAOD_12X # VERIFY (2023 MiniAOD era modifier)
+  NANO:
+    versions:
+      v12:
+        CMSSW: CMSSW_13_0_14
+        GlobalTag: 130X_mcRun3_2023_realistic_v14
+        era: Run3
+      v15:
+        SCRAM_ARCH: el8_amd64_gcc12
+        CMSSW: CMSSW_15_0_15_patch4
+        GlobalTag: 150X_mcRun3_2023_realistic_v1
+        era: Run3,run3_nanoAOD_pre142X
+
+Run3_2023BPix:
+  prod_steps: [LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO]
+  default:
+    SCRAM_ARCH: el8_amd64_gcc11
+    CMSSW: CMSSW_13_0_14
+    GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
+  LHEGS:
+    beamspot: Realistic25ns13p6TeVEarly2023Collision # VERIFY
+  DIGIPremixHLT:
+    step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2023v12
+    pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer23BPix_130X_mcRun3_2023_realistic_postBPix_v1-v1/PREMIX"
+  MINIAOD:
+    GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
+    era: Run3,run3_miniAOD_12X # VERIFY
+  NANO:
+    versions:
+      v12:
+        CMSSW: CMSSW_13_0_14
+        GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
+        era: Run3
+      v15:
+        SCRAM_ARCH: el8_amd64_gcc12
+        CMSSW: CMSSW_15_0_15_patch4
+        GlobalTag: 150X_mcRun3_2023_realistic_postBPix_v1
+        era: Run3,run3_nanoAOD_pre142X
+
+Run3_2024:
+  # v15-only (no v12 for 2024); MiniAOD is v6 on 15_0_2.
+  prod_steps: [LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO]
+  default:
+    SCRAM_ARCH: el8_amd64_gcc12
+    CMSSW: CMSSW_14_0_18
+    GlobalTag: 140X_mcRun3_2024_realistic_v26
+  LHEGS:
+    beamspot: Realistic2024Collision # VERIFY (Run3Summer24 GS beamspot)
+  DIGIPremixHLT:
+    step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2024v14
+    era: Run3_2024
+    pileup_input: "dbs:/Neutrino_E-10_gun/RunIIISummer24PrePremix-Premixlib2024_140X_mcRun3_2024_realistic_v26-v1/PREMIX"
+  RECO:
+    era: Run3_2024
+  MINIAOD:
+    CMSSW: CMSSW_15_0_2
+    GlobalTag: 150X_mcRun3_2024_realistic_v2
+    era: Run3_2024
+  NANO:
+    versions:
+      v15:
+        CMSSW: CMSSW_15_0_2
+        GlobalTag: 150X_mcRun3_2024_realistic_v2
+        era: Run3_2024

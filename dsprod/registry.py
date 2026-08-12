@@ -5,9 +5,11 @@ Concrete `ProcessCustomization` subclasses register themselves with `@register_p
 any registered process. A `prod_setup` YAML selects one by its `process:` key.
 """
 
-from .processes.base import ProcessCustomization
+# Note: do NOT import from .processes here — dsprod.processes eagerly imports the concrete
+# process modules, which import register_process back from this module (circular). Registration
+# is triggered lazily in get_process/all_processes via `import dsprod.processes`.
 
-_registry: "dict[str, ProcessCustomization]" = {}
+_registry = {}
 
 
 def register_process(cls):
@@ -21,7 +23,7 @@ def register_process(cls):
     return cls
 
 
-def get_process(name: str) -> ProcessCustomization:
+def get_process(name: str) -> "ProcessCustomization":
     import dsprod.processes  # noqa: F401  (ensure all process modules are imported)
 
     if name not in _registry:
