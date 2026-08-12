@@ -39,6 +39,21 @@ def is_remote_path(path):
     return path.startswith(_REMOTE_PREFIXES)
 
 
+def runprod_branches(eras, points):
+    """Ordered (era, point_index, seed) list — the single source of RunProd branch numbering.
+
+    Shared by RunProd.create_branch_map and NanoMergeTask (which inverts it to find the RunProd
+    branch id of each seed it merges), so the two never drift.
+    """
+    out = []
+    for era in eras:
+        for pi, point in enumerate(points):
+            n_jobs = math.ceil(point.events_total / point.events_per_job)
+            for job in range(n_jobs):
+                out.append((era, pi, job + 1))  # seed = 1-based job index
+    return out
+
+
 class Task(law.Task):
     setup = luigi.Parameter(description="path to the production setup YAML")
 
@@ -220,15 +235,7 @@ class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
 
     def create_branch_map(self):
-        branches = {}
-        bid = 0
-        for era in self.eras:
-            for pi, point in enumerate(self.points):
-                n_jobs = math.ceil(point.events_total / point.events_per_job)
-                for job in range(n_jobs):
-                    branches[bid] = (era, pi, job + 1)  # seed = 1-based job index
-                    bid += 1
-        return branches
+        return dict(enumerate(runprod_branches(self.eras, self.points)))
 
     def workflow_requires(self):
         return {
@@ -287,3 +294,76 @@ class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
             finally:
                 if is_tmp:
                     shutil.rmtree(work_dir, ignore_errors=True)
+
+
+class NanoMergeTask(Task, HTCondorWorkflow, law.LocalWorkflow):
+    """Merge a group of per-seed nano files into one, then drop the staged inputs (FLAF-friendly)."""
+
+    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 3.0)
+
+    def create_branch_map(self):
+        fpm = int(self.prod_setup.get("files_per_merge", 20))
+        branches = {}
+        bid = 0
+        for era in self.eras:
+            for pi, point in enumerate(self.points):
+                n_jobs = math.ceil(point.events_total / point.events_per_job)
+                seeds = list(range(1, n_jobs + 1))
+                for version in self.nano_versions(era):
+                    for group, start in enumerate(range(0, len(seeds), fpm)):
+                        branches[bid] = (
+                            era,
+                            pi,
+                            version,
+                            group,
+                            seeds[start : start + fpm],
+                        )
+                        bid += 1
+        return branches
+
+    def _runprod_index(self):
+        return {bd: i for i, bd in enumerate(runprod_branches(self.eras, self.points))}
+
+    def workflow_requires(self):
+        return {"runprod": RunProd.req(self)}
+
+    def requires(self):
+        era, pi, _, _, seeds = self.branch_data
+        idx = self._runprod_index()
+        return {seed: RunProd.req(self, branch=idx[(era, pi, seed)]) for seed in seeds}
+
+    def output(self):
+        era, pi, version, group, _ = self.branch_data
+        name = self.process.point_name(self.points[pi])
+        return self.storage_target(
+            f"nanoAOD_{version}", era, name, f"nano_{version}_{group}.root"
+        )
+
+    def run(self):
+        era, pi, version, _, seeds = self.branch_data
+        vparams = run_step.resolve_step_params(
+            self.conditions, era, "NANO", version=version
+        )
+        staged = [self.input()[seed][version] for seed in seeds]
+        work_dir, is_tmp = self.law_job_home()
+        try:
+            with contextlib.ExitStack() as stack:
+                local_ins = [
+                    stack.enter_context(t.localize("r")).abspath for t in staged
+                ]
+                with self.output().localize("w") as out_local:
+                    run_step.hadd_nano(vparams, out_local.abspath, local_ins, work_dir)
+                    n_out = run_step.count_events(vparams, out_local.abspath, work_dir)
+                    n_in = sum(
+                        run_step.count_events(vparams, p, work_dir) for p in local_ins
+                    )
+                    if n_out != n_in:
+                        raise RuntimeError(
+                            f"nano merge entry mismatch: merged {n_out} != sum inputs {n_in}"
+                        )
+            # merged output uploaded and verified -> remove the staged per-seed inputs
+            for t in staged:
+                t.remove()
+        finally:
+            if is_tmp:
+                shutil.rmtree(work_dir, ignore_errors=True)

@@ -236,3 +236,28 @@ def run_nano(conditions, era, version, seed, n_evt, work_dir, miniaod_file, verb
         verbose=verbose,
     )
     return os.path.join(work_dir, out)
+
+
+def hadd_nano(step_params, out_path, in_paths, work_dir, verbose=1):
+    """Merge NanoAOD files with haddnano.py in the nano version's CMSSW env.
+
+    haddnano.py correctly sums the Runs tree (genEventCount/genEventSumw) needed for
+    normalization, unlike a plain hadd.
+    """
+    args = " ".join([out_path] + list(in_paths))
+    cmd = f"{_cmsenv_prefix(step_params)} haddnano.py {args}"
+    ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
+
+
+def count_events(step_params, path, work_dir, tree="Events"):
+    """Return the number of entries in `tree` of a nano file (opened in the nano CMSSW env)."""
+    script = os.path.join(work_dir, "_count_events.py")
+    with open(script, "w") as f:
+        f.write(
+            "import ROOT, sys\n"
+            "f = ROOT.TFile.Open(sys.argv[1])\n"
+            f'print(int(f.Get("{tree}").GetEntries()))\n'
+        )
+    cmd = f"{_cmsenv_prefix(step_params)} python3 {script} {path}"
+    _, out, _ = ps_call([cmd], shell=True, catch_stdout=True, verbose=0)
+    return int(out.strip().splitlines()[-1])
