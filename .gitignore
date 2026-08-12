@@ -1,0 +1,8 @@
+# on-demand CMSSW installs and law/job state
+/soft/
+/data/
+/.law/
+
+# python
+__pycache__/
+*.pyc

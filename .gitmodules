@@ -1,0 +1,4 @@
+[submodule "genproductions_scripts"]
+	path = genproductions_scripts
+	url = ssh://git@gitlab.cern.ch:7999/cms-gen/genproductions_scripts.git
+	branch = master
