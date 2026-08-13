@@ -91,22 +91,50 @@ action() {
 
   export ANALYSIS_PATH="$this_dir"
   export ANALYSIS_DATA_PATH="$ANALYSIS_PATH/data"
-  export X509_USER_PROXY="$ANALYSIS_DATA_PATH/voms.proxy"
+  # Keep a proxy already provided by the batch system (CRAB sets X509_USER_PROXY on the worker);
+  # only fall back to the workspace proxy on lxplus.
+  export X509_USER_PROXY="${X509_USER_PROXY:-$ANALYSIS_DATA_PATH/voms.proxy}"
   run_cmd mkdir -p "$ANALYSIS_DATA_PATH"
 
-  # law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's WLCG targets
-  # use the system gfal2 (+ its working http/Davix plugin for davs://). This is self-contained and
-  # avoids the LCG/gfal library conflicts; built once, guarded by .installed.
-  local dsprod_env="$this_dir/soft/dsprod_env"
-  if [ ! -f "$dsprod_env/.installed" ]; then
-    echo "Creating dsprod_env (law + luigi) ..."
-    run_cmd /usr/bin/python3 -m venv --system-site-packages "$dsprod_env"
-    source "$dsprod_env/bin/activate"
-    run_cmd pip install --quiet --upgrade pip
-    run_cmd pip install --quiet luigi==3.7.3 law
-    touch "$dsprod_env/.installed"
+  if [ -n "$DSPROD_ON_GRID" ]; then
+    # Grid worker (CRAB): no AFS, no PyPI, and the system python3 is too old for luigi (needs
+    # >=3.8). Use a cvmfs python3.9 from the CRAB-provided CMSSW plus the vendored (pure-python)
+    # law + luigi shipped in the code tarball (soft/vendor). No venv, no pip, no network.
+    run_cmd source /cvmfs/cms.cern.ch/cmsset_default.sh
+    local grid_cmssw="${CMSSW_BASE:-}"
+    if [ -z "$grid_cmssw" ]; then
+      grid_cmssw="$( ls -d "${LAW_JOB_INIT_DIR:-/srv}"/CMSSW_*/ /srv/CMSSW_*/ 2>/dev/null | sort | tail -1 )"
+    fi
+    if [ -n "$grid_cmssw" ] && [ -d "${grid_cmssw%/}/src" ]; then
+      pushd "${grid_cmssw%/}/src" >/dev/null
+      eval `scramv1 runtime -sh`
+      popd >/dev/null
+    fi
+    export PYTHONPATH="$this_dir/soft/vendor:$PYTHONPATH"
+    echo "grid env: python3=$(command -v python3) ($(python3 --version 2>&1)), vendored law/luigi on PYTHONPATH"
   else
-    source "$dsprod_env/bin/activate"
+    # lxplus: law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's
+    # WLCG targets use the system gfal2 (+ its working http/Davix plugin for davs://). Self-contained,
+    # avoids the LCG/gfal library conflicts; built once, guarded by .installed.
+    local dsprod_env="$this_dir/soft/dsprod_env"
+    if [ ! -f "$dsprod_env/.installed" ]; then
+      echo "Creating dsprod_env (law + luigi) ..."
+      run_cmd /usr/bin/python3 -m venv --system-site-packages "$dsprod_env"
+      source "$dsprod_env/bin/activate"
+      run_cmd pip install --quiet --upgrade pip
+      run_cmd pip install --quiet luigi==3.7.3 law
+      touch "$dsprod_env/.installed"
+    else
+      source "$dsprod_env/bin/activate"
+    fi
+    # Vendor pure-python law + luigi (+ deps) so grid-worker jobs can ship them in the code
+    # tarball (workers have no PyPI and a too-old system python). Built once from the venv's pip;
+    # the compiled tornado speedup is dropped so it stays arch-independent (pure-python fallback).
+    if [ ! -d "$this_dir/soft/vendor/law" ]; then
+      echo "Vendoring law + luigi into soft/vendor (for grid jobs) ..."
+      run_cmd pip install --quiet --target "$this_dir/soft/vendor" luigi==3.7.3 law==0.1.20
+      find "$this_dir/soft/vendor" -name "*.so" -delete 2> /dev/null
+    fi
   fi
 
   if [ ! -z $ZSH_VERSION ]; then

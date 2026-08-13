@@ -36,6 +36,9 @@ def build_code_tarball(ana_path, out_path):
         "env.sh",
         "bootstrap.sh",
         "genproductions_scripts",
+        # vendored pure-python law + luigi (+ deps), used by env.sh on grid workers where
+        # there is no PyPI access and the system python is too old to pip-install luigi.
+        "soft/vendor",
     ]
     present = [p for p in includes if os.path.exists(os.path.join(ana_path, p))]
     subprocess.run(

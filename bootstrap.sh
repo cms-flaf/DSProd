@@ -14,6 +14,7 @@ action() {
     tarball="$( ls dsprod_code*.tar.gz 2>/dev/null | head -1 )"
     if [ -n "$tarball" ]; then
         mkdir -p dsprod_code && tar -xzf "$tarball" -C dsprod_code
+        export DSPROD_ON_GRID=1
         source dsprod_code/env.sh
     else
         source "{{analysis_path}}/env.sh"
