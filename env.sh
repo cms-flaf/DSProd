@@ -115,6 +115,25 @@ action() {
   fi
   source "$( law completion )" "" 2> /dev/null
 
+  # CRAB submission (--workflow crab): the crab CLI needs a cmsenv, which would clobber the
+  # law venv. Provide a `crab` wrapper on PATH that cmsenv's a DSProd CMSSW internally, so the
+  # law parent keeps the venv and only the crab subprocess enters CMSSW. Set up only when a
+  # CMSSW release is present (installed by InstallCMSSW); harmless for htcondor/local runs.
+  local dsprod_cmssw=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
+  if [ -n "$dsprod_cmssw" ]; then
+    export CMSSW_BASE="${dsprod_cmssw%/}"
+    mkdir -p "$ANALYSIS_PATH/soft/bin"
+    cat > "$ANALYSIS_PATH/soft/bin/crab" <<'CRABWRAP'
+#!/bin/bash
+source /cvmfs/cms.cern.ch/cmsset_default.sh
+_c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
+[ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
+exec /cvmfs/cms.cern.ch/common/crab "$@"
+CRABWRAP
+    chmod +x "$ANALYSIS_PATH/soft/bin/crab"
+    export PATH="$ANALYSIS_PATH/soft/bin:$PATH"
+  fi
+
   # Convenience: run a command inside DEFAULT_CMSSW_BASE (set per-step by the tasks in Phase 3).
   alias cmsEnv="env -i HOME=$HOME ANALYSIS_PATH=$ANALYSIS_PATH X509_USER_PROXY=$X509_USER_PROXY DEFAULT_CMSSW_BASE=\$DEFAULT_CMSSW_BASE KRB5CCNAME=$KRB5CCNAME $ANALYSIS_PATH/dsprod/cmsEnv.sh"
 

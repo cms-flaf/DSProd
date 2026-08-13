@@ -21,6 +21,7 @@ import luigi
 import yaml
 
 from . import registry, run_step
+from .crab import CrabWorkflow
 from .tools import (
     CreateVomsProxy,
     ps_call,
@@ -253,7 +254,7 @@ class InstallCMSSW(Task, law.LocalWorkflow):
         out.touch()
 
 
-class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
+class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Provide the gridpack for each point: import an existing one, or generate a new one."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
@@ -314,7 +315,7 @@ class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
                 shutil.rmtree(work_dir, ignore_errors=True)
 
 
-class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
+class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 24.0)
@@ -386,7 +387,7 @@ class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
                     shutil.rmtree(work_dir, ignore_errors=True)
 
 
-class NanoMergeTask(Task, HTCondorWorkflow, law.LocalWorkflow):
+class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Merge a group of per-seed nano files into one, then drop the staged inputs (FLAF-friendly)."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 3.0)

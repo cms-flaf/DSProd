@@ -1,0 +1,28 @@
+# CRAB submission test: generate the M-800 gridpack on the grid via CRAB (self-contained job).
+process: X_HH_bbWW
+conditions: config/conditions_Run3.yaml
+
+storage: /eos/user/k/kandroso/DSProd/XHHbbWW_crabtest
+
+eras: [Run3_2022EE]
+nano_versions:
+  Run3_2022EE: [v12]
+
+first_step: LHEGS
+last_step: NANO
+
+events_per_job: 100
+files_per_merge: 10
+
+# CRAB config (submit-time write-check only; products go to the `storage:` EOS path above)
+crab:
+  storage_site: T3_CH_CERNBOX
+  out_lfn_base: /store/user/kandroso/DSProd_crab
+  max_memory_mb: 2500
+  max_cores: 1
+
+points:
+  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800
+    mass: 800
+    spin: 0
+    events_total: 100
