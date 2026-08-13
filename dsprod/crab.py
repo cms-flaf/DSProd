@@ -60,7 +60,42 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
                 c.crab.JobType.outputFiles = None
                 c.crab.JobType.disableAutomaticOutputCollection = True
         c.output_files = []
+        # the config-object tweaks above are not reflected in the already-written crab cfg, so
+        # rewrite it: strip the deprecated sendPythonFolder (rejected by modern CRAB) and force
+        # no CRAB-side transfers (DSProd owns remote I/O).
+        try:
+            self._rewrite_crab_job_file(job_file)
+        except Exception as exc:
+            print(f"WARNING: could not post-process crab job file {job_file}: {exc}")
         return job_file, c
+
+    @staticmethod
+    def _rewrite_crab_job_file(job_file):
+        with open(job_file) as f:
+            lines = f.readlines()
+        new_lines = []
+        skip_list = False
+        for ln in lines:
+            stripped = ln.strip()
+            if "sendPythonFolder" in ln:
+                continue
+            if "General.transferOutputs" in ln:
+                new_lines.append("cfg.General.transferOutputs = False\n")
+                continue
+            if "General.transferLogs" in ln:
+                new_lines.append("cfg.General.transferLogs = False\n")
+                continue
+            if "JobType.outputFiles" in ln:
+                if stripped.endswith("[") or ("[" in stripped and "]" not in stripped):
+                    skip_list = True
+                continue
+            if skip_list:
+                if "]" in stripped:
+                    skip_list = False
+                continue
+            new_lines.append(ln)
+        with open(job_file, "w") as f:
+            f.writelines(new_lines)
 
 
 _CrabProxyBase = law.cms.CrabWorkflow.workflow_proxy_cls
