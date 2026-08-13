@@ -22,6 +22,7 @@ import yaml
 
 from . import registry, run_step
 from .crab import CrabWorkflow
+from .law_wlcg import WLCGFileSystem, WLCGFileTarget
 from .tools import (
     CreateVomsProxy,
     ps_call,
@@ -30,10 +31,22 @@ from .tools import (
 )
 
 law.contrib.load("htcondor")
-law.contrib.load("wlcg")
 
 #: path prefixes that must be served by a remote (WLCG/gfal) target
 _REMOTE_PREFIXES = ("davs://", "root://", "gsiftp://", "/eos/")
+
+#: lazily-built remote file system (needs a valid VOMS proxy at construction time).
+_wlcg_fs = None
+
+
+def get_wlcg_fs():
+    """DSProd remote FS, backed by the gfal-CLI interface (works on CRAB workers, where the
+    gfal2 python module law.contrib.gfal needs is unavailable). Base from law.cfg [wlcg_fs].
+    """
+    global _wlcg_fs
+    if _wlcg_fs is None:
+        _wlcg_fs = WLCGFileSystem(law.config.get_expanded("wlcg_fs", "base"))
+    return _wlcg_fs
 
 
 def copy_param(ref_param, new_default):
@@ -149,7 +162,7 @@ class Task(law.Task):
     def target(self, path):
         """A remote (WLCG) or local file target, chosen by the path prefix."""
         if is_remote_path(path):
-            return law.wlcg.WLCGFileTarget(path)
+            return WLCGFileTarget(path, fs=get_wlcg_fs())
         return law.LocalFileTarget(path)
 
     def storage_path(self, *parts):

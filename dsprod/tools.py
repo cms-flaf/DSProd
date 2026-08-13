@@ -2,12 +2,13 @@
 
 DSProd deliberately does not depend on RunKit as a submodule; only the small,
 stable set of functions below is needed. Keep in sync with the originals:
-  - ps_call, PsCallError, update_kerberos_ticket, timed_call_wrapper
-        <- FLAF/RunKit/run_tools.py
+  - ps_call, PsCallError, update_kerberos_ticket, timed_call_wrapper,
+    repeat_until_success, adler32sum                    <- FLAF/RunKit/run_tools.py
   - get_voms_proxy_info                                <- FLAF/RunKit/grid_tools.py
   - CreateVomsProxy                              <- FLAF/RunKit/grid_helper_tasks.py
-File transfers go through law.contrib WLCG targets, so the RunKit gfal cluster is
-not vendored. If explicit gfal is ever required, copy that small cluster the same way.
+Remote file I/O reuses FLAF's gfal-CLI file interface (dsprod/grid_tools.py +
+dsprod/law_gfal.py + dsprod/law_wlcg.py), so it works on grid (CRAB) workers where
+the gfal2 python module is unavailable but the gfal-* CLIs are.
 """
 
 import datetime
@@ -15,6 +16,9 @@ import os
 import re
 import subprocess
 import sys
+import time
+import traceback
+import zlib
 from threading import Timer
 
 import law
@@ -148,6 +152,36 @@ def ps_call(
             err = err_decoded if split is None else err_decoded.split(split)
 
     return proc.returncode, output, err
+
+
+def repeat_until_success(
+    fn, opt_list=([],), exception=None, n_retries=4, retry_sleep_interval=10, verbose=1
+):
+    for n in range(n_retries):
+        for opt in opt_list:
+            try:
+                fn(*opt)
+                return True
+            except Exception:
+                if verbose > 0:
+                    print(traceback.format_exc())
+        if n != n_retries - 1:
+            sleep_interval = retry_sleep_interval ** (n + 1)
+            if verbose > 0:
+                print(f"Waiting for {sleep_interval} seconds before the next try.")
+            time.sleep(sleep_interval)
+    if exception is not None:
+        raise exception
+    return False
+
+
+def adler32sum(file_name):
+    block_size = 256 * 1024 * 1024
+    asum = 1
+    with open(file_name, "rb") as f:
+        while data := f.read(block_size):
+            asum = zlib.adler32(data, asum)
+    return asum
 
 
 def update_kerberos_ticket(verbose=1):
