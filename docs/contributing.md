@@ -30,6 +30,18 @@ bash run_tools/apply_format.sh --dry-run  # check only, no changes
 `apply_format.sh` looks at the files changed on your branch vs. `origin/main`, so run it after
 committing (or with your changes staged) for it to see them.
 
+## Repository sanity
+
+A second workflow, **Check repository state** (`.github/workflows/repo-sanity-checks.yaml`), keeps
+the repository small and text-only on every pull request:
+
+- **No binary files** — any changed file detected as binary fails the check; commit large or
+  binary assets via [Git LFS](https://git-lfs.com/) instead. (Empty files and directories are not
+  treated as binary.)
+- **No large size increase** — the PR's effect on the packed repository size is measured against a
+  simulated squash merge and must stay under **1024 KiB**. If a large increase is genuinely
+  intended, add the **`big changes`** label to the PR to allow it.
+
 ## Documentation
 
 These docs are built with [MkDocs](https://www.mkdocs.org/) (Material theme). To preview:
