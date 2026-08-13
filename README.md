@@ -7,27 +7,32 @@ directly via the private-nano (HLepRare) convention.
 
 ## Status
 
-**Phase 1 (skeleton).** The generic framework is in place; the concrete production tasks
-are added in later phases (see the architecture doc). Current pieces:
+The framework and the core tasks are in place (MakeGridpack, RunProd, NanoMergeTask,
+InstallCMSSW), runnable **local / HTCondor / CRAB**. CRAB has been validated end-to-end
+(an M-800 gridpack generated on a grid worker and staged to EOS). Remaining: MakeManifest
+(Phase 7). Current pieces:
 
 ```
 env.sh / bootstrap.sh / config/law.cfg   environment + law setup (CMSSW installed on demand)
 genproductions_scripts/                  submodule (GitLab cms-gen) — gridpack generators
 dsprod/
-  tools.py        minimal utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos)
-  cmsEnv.sh        run a command inside a CMSSW runtime
-  tasks.py         Task base + HTCondorWorkflow (+ kerberos renewal)
+  tasks.py         Task base + HTCondorWorkflow + InstallCMSSW/MakeGridpack/RunProd/NanoMergeTask
+  crab.py          CRAB backend (law.contrib.cms.CrabWorkflow); ships code via inputFiles
+  run_step.py      cmsDriver step builder (GEN→…→NANO), per-step CMSSW
   registry.py      process-module registry
-  processes/
-    base.py        ProcessCustomization ABC + Point / GridpackSpec
+  processes/       ProcessCustomization ABC + per-process modules (e.g. x_hh_bbww.py)
+  tools.py         utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos, retries)
+  grid_tools.py / law_gfal.py / law_wlcg.py
+                   FLAF's gfal-CLI remote-file interface (works on WLCG workers, where the
+                   gfal2 python module law.contrib.gfal needs is unavailable)
 ```
 
 ## Production chain (design)
 
 ```
-MakeProdCard ─► MakeGridpack ─► RunProd(era,point,seed) ─► NanoMergeTask ─► MakeManifest ─► FLAF
- (generate)   (or import existing)  │ fused GEN→DRPremix→MiniAOD→{NANOv12,NANOv15}, stage per-seed
-                                    └─ NanoMergeTask haddnano's a group and drops the staged inputs
+MakeGridpack ─► RunProd(era,point,seed) ─► NanoMergeTask ─► MakeManifest ─► FLAF
+(generate or   │ fused GEN→DRPremix→MiniAOD→{NANOv12,NANOv15}, stage per-seed
+import existing)└─ NanoMergeTask haddnano's a group and drops the staged inputs
 ```
 
 ## Quick start
@@ -36,6 +41,29 @@ MakeProdCard ─► MakeGridpack ─► RunProd(era,point,seed) ─► NanoMerge
 source env.sh          # sets up law; per-era CMSSW is installed on demand by the tasks
 law index              # list available tasks
 ```
+
+## Running (backends)
+
+Every production task accepts `--workflow local|htcondor|crab`. A production is described by a
+setup YAML in `config/prod_setups/` (process, eras, nano versions, points, storage path).
+
+```bash
+# local test
+law run MakeGridpack --setup config/prod_setups/Run3_XHHbbWW_test.yaml --workflow local
+
+# HTCondor (CERN batch)
+law run RunProd --setup <setup>.yaml --workflow htcondor
+
+# CRAB (WLCG grid) — needs a VOMS proxy + a MyProxy credential valid >= 5 days
+law run MakeGridpack --setup config/prod_setups/Run3_XHHbbWW_crabtest.yaml --workflow crab
+```
+
+CRAB notes: DSProd owns all output/log I/O (products go to the setup's `storage:` EOS path via
+the gfal-CLI interface), so CRAB's own stageout/logs are forced off; the `crab:` block in the
+setup (`storage_site`, `out_lfn_base`, optional `whitelist`) is only a submit-time write check
+and the processing-site choice. WLCG workers have no AFS, so the code is shipped in the CRAB
+`inputFiles` tarball and law/luigi are vendored (`soft/vendor`, built once by `env.sh`) so the
+worker needs no PyPI.
 
 Full architecture and the McM-sourced per-era conditions: see the FLAF_all design doc
 `CLAUDE/reviews/2026-08-12_dsprod-mc-production-architecture.md`.
