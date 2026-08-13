@@ -23,6 +23,7 @@ import uuid
 
 import law
 import luigi
+from law.job.base import JobInputFile
 
 law.contrib.load("cms")
 
@@ -239,10 +240,19 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         config.crab.JobType.numCores = n_cores
         config.crab.JobType.maxMemoryMB = mem
 
-        # ship the DSProd code (no AFS on WLCG workers)
-        input_files = list(getattr(config.crab.JobType, "inputFiles", None) or [])
-        input_files.append(self._code_tarball())
-        config.crab.JobType.inputFiles = input_files
+        # ship the DSProd code (no AFS on WLCG workers). This MUST go through law's
+        # input_files dict: the job-file factory rebuilds JobType.inputFiles from it and
+        # would overwrite any value written directly to config.crab.JobType.inputFiles.
+        # law_job.sh symlinks every input file into LAW_JOB_HOME (the bootstrap's CWD), so
+        # the tarball lands exactly where bootstrap.sh looks for it. postfix=False keeps the
+        # name `dsprod_code.tar.gz` the bootstrap checks; render=False (binary tarball).
+        config.input_files["dsprod_code"] = JobInputFile(
+            self._code_tarball(),
+            copy=True,
+            share=True,
+            postfix=False,
+            render=False,
+        )
 
         max_runtime = getattr(self, "max_runtime", None)
         if max_runtime is not None and float(max_runtime) > 0:
