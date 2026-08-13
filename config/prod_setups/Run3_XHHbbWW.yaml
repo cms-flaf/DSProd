@@ -3,7 +3,7 @@ process: X_HH_bbWW
 conditions: config/conditions_Run3.yaml
 
 # output root (FLAF consumes <storage>/nanoAOD_<version>/<era>/<process>/<point>/nano_<version>_<n>.root)
-storage: davs://eosuser.cern.ch:443/eos/user/k/kandroso/DSProd/XHHbbWW
+storage: /eos/user/k/kandroso/DSProd/XHHbbWW
 
 eras: [Run3_2022EE]
 

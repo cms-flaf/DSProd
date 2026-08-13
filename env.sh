@@ -94,20 +94,26 @@ action() {
   export X509_USER_PROXY="$ANALYSIS_DATA_PATH/voms.proxy"
   run_cmd mkdir -p "$ANALYSIS_DATA_PATH"
 
-  local os_version=$(cat /etc/os-release | grep VERSION_ID | sed -E 's/VERSION_ID="([0-9]+).*"/\1/')
+  # law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's WLCG targets
+  # use the system gfal2 (+ its working http/Davix plugin for davs://). This is self-contained and
+  # avoids the LCG/gfal library conflicts; built once, guarded by .installed.
+  local dsprod_env="$this_dir/soft/dsprod_env"
+  if [ ! -f "$dsprod_env/.installed" ]; then
+    echo "Creating dsprod_env (law + luigi) ..."
+    run_cmd /usr/bin/python3 -m venv --system-site-packages "$dsprod_env"
+    source "$dsprod_env/bin/activate"
+    run_cmd pip install --quiet --upgrade pip
+    run_cmd pip install --quiet luigi==3.7.3 law
+    touch "$dsprod_env/.installed"
+  else
+    source "$dsprod_env/bin/activate"
+  fi
 
   if [ ! -z $ZSH_VERSION ]; then
     autoload bashcompinit
     bashcompinit
   fi
-  source /cvmfs/sft.cern.ch/lcg/views/setupViews.sh LCG_102 x86_64-centos${os_version}-gcc11-opt
-  source /afs/cern.ch/user/m/mrieger/public/law_sw/setup.sh
-  source "$( law completion )" ""
-
-  current_args=( "$@" )
-  set --
-  source /cvmfs/cms.cern.ch/rucio/setup-py3.sh &> /dev/null
-  set -- "${current_args[@]}"
+  source "$( law completion )" "" 2> /dev/null
 
   # Convenience: run a command inside DEFAULT_CMSSW_BASE (set per-step by the tasks in Phase 3).
   alias cmsEnv="env -i HOME=$HOME ANALYSIS_PATH=$ANALYSIS_PATH X509_USER_PROXY=$X509_USER_PROXY DEFAULT_CMSSW_BASE=\$DEFAULT_CMSSW_BASE KRB5CCNAME=$KRB5CCNAME $ANALYSIS_PATH/dsprod/cmsEnv.sh"
@@ -117,6 +123,13 @@ action() {
 
 if [ "X$1" = "Xinstall_cmssw" ]; then
   do_install_cmssw "${@:2}"
+elif [ "X$1" = "Xinstall" ]; then
+  # install <scram_arch> <cmssw_version> [inst_type]  — cross-OS aware (used by the InstallCMSSW task)
+  export PATH="/cvmfs/cms.cern.ch/common:$PATH"  # for cmssw-<os>
+  os_version=$(cat /etc/os-release | grep VERSION_ID | sed -E 's/VERSION_ID="([0-9]+).*"/\1/')
+  node_os=$(get_os_prefix $os_version)$os_version
+  target_os=$(echo $2 | cut -d_ -f1)
+  install_cmssw $2 $3 $node_os $target_os ${4:-gen}
 else
   action "$@"
 fi

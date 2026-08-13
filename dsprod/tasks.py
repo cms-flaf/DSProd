@@ -60,6 +60,22 @@ def runprod_branches(eras, points):
     return out
 
 
+def cmssw_releases_for_era(conditions, era):
+    """Sorted unique (SCRAM_ARCH, CMSSW) needed to produce `era` (all prod_steps + NANO versions)."""
+    releases = set()
+    for step in conditions[era]["prod_steps"]:
+        if step == "NANO":
+            for version in conditions[era]["NANO"].get("versions", {}):
+                p = run_step.resolve_step_params(
+                    conditions, era, "NANO", version=version
+                )
+                releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
+        else:
+            p = run_step.resolve_step_params(conditions, era, step)
+            releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
+    return sorted(releases)
+
+
 class Task(law.Task):
     setup = luigi.Parameter(description="path to the production setup YAML")
 
@@ -210,6 +226,33 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
         return config
 
 
+class InstallCMSSW(Task, law.LocalWorkflow):
+    """Install (once, on the shared AFS area) the CMSSW releases an era's production needs.
+
+    Runs locally (installs into `soft/`, which HTCondor workers see via AFS); the releases depend on
+    the era, so this is a per-era branch. Idempotent — env.sh guards each release with a .installed flag.
+    """
+
+    def create_branch_map(self):
+        return dict(enumerate(self.eras))
+
+    def output(self):
+        return self.local_target(f"{self.branch_data}.installed")
+
+    def run(self):
+        era = self.branch_data
+        for arch, cmssw in cmssw_releases_for_era(self.conditions, era):
+            print(f"InstallCMSSW[{era}]: installing {cmssw} ({arch})")
+            ps_call(
+                [f"bash {self.ana_path()}/env.sh install {arch} {cmssw}"],
+                shell=True,
+                verbose=1,
+            )
+        out = self.output()
+        os.makedirs(os.path.dirname(out.path), exist_ok=True)
+        out.touch()
+
+
 class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
     """Provide the gridpack for each point: import an existing one, or generate a new one."""
 
@@ -275,14 +318,18 @@ class RunProd(Task, HTCondorWorkflow, law.LocalWorkflow):
     def workflow_requires(self):
         return {
             "voms": CreateVomsProxy.req(self),
-            "gridpack": MakeGridpack.req(self, workflow="local"),
+            "cmssw": InstallCMSSW.req(self, workflow="local"),
+            "gridpack": MakeGridpack.req(self),
         }
 
     def requires(self):
-        _, pi, _ = self.branch_data
+        era, pi, _ = self.branch_data
         return {
             "voms": CreateVomsProxy.req(self),
-            "gridpack": MakeGridpack.req(self, branch=pi, workflow="local"),
+            "cmssw": InstallCMSSW.req(
+                self, branch=self.eras.index(era), workflow="local"
+            ),
+            "gridpack": MakeGridpack.req(self, branch=pi),
         }
 
     def _staged_target(self, era, point, version, seed):
