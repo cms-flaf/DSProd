@@ -1,0 +1,23 @@
+# Gridpack-generation validation: generate M-800 via DSProd and compare to the central cvmfs gridpack.
+# Only MakeGridpack is exercised (no events needed).
+process: X_HH_bbWW
+conditions: config/conditions_Run3.yaml
+
+storage: /eos/user/k/kandroso/DSProd/XHHbbWW_gpval
+
+eras: [Run3_2022EE]
+nano_versions:
+  Run3_2022EE: [v12]
+
+first_step: LHEGS
+last_step: NANO
+
+events_per_job: 100
+files_per_merge: 10
+
+points:
+  # no `gridpack:` -> generate mode; compare the result against the central M-800 cvmfs gridpack
+  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800
+    mass: 800
+    spin: 0
+    events_total: 100

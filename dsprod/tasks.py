@@ -283,17 +283,25 @@ class MakeGridpack(Task, HTCondorWorkflow, law.LocalWorkflow):
         try:
             cards_dir = os.path.join(work_dir, "cards")
             name = self.process.render_gridpack_cards(point, cards_dir)
-            gen_sh = os.path.join(
-                self.ana_path(),
-                "genproductions_scripts",
-                "bin",
-                spec.generator,
-                "gridpack_generation.sh",
+            gen_bin = os.path.join(
+                self.ana_path(), "genproductions_scripts", "bin", spec.generator
             )
+            # gridpack_generation.sh reconstructs its Utilities path assuming the repo is named
+            # `genproductions`; in genproductions_scripts that lookup fails. Make Utilities reachable
+            # via the script's fallback (<bin>/Utilities) and pass PRODHOME explicitly (line 776
+            # only defaults PRODHOME to pwd when unset). The gridpack is built in cwd (work_dir).
+            util_link = os.path.join(gen_bin, "Utilities")
+            if not os.path.exists(util_link):
+                try:
+                    os.symlink(os.path.join("..", "..", "Utilities"), util_link)
+                except FileExistsError:
+                    pass
+            env = dict(os.environ, PRODHOME=gen_bin)
             ps_call(
-                [f"bash {gen_sh} {name} {cards_dir}"],
+                [f"bash {gen_bin}/gridpack_generation.sh {name} {cards_dir}"],
                 shell=True,
                 cwd=work_dir,
+                env=env,
                 verbose=1,
             )
             tarballs = glob.glob(os.path.join(work_dir, f"{name}_*_tarball.tar.xz"))
