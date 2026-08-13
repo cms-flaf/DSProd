@@ -22,9 +22,11 @@ events_per_job: 2000
 files_per_merge: 25 # NanoMergeTask groups (Phase 4)
 
 points:
+  # Channel note: the current fragment.py selects the SINGLE-lepton channel (2B2JLNu) via its
+  # ResonanceDecayFilter daughters. The gridpack is channel-independent (shared across channels).
   # `gridpack:` set -> existing mode (import the central cvmfs gridpack). Remove it to generate
   # from the cards template (config/process_templates/X_HH_bbWW/cards) via genproductions_scripts.
-  - name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-800
+  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800
     mass: 800
     spin: 0
     events_total: 100000

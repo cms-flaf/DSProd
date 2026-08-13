@@ -101,6 +101,7 @@ def build_cmsdriver(
         customise_commands += [
             f"process.RandomNumberGeneratorService.externalLHEProducer.initialSeed=int({seed})",
             f'process.externalLHEProducer.args = cms.vstring("{gridpack}")',
+            f"process.externalLHEProducer.nEvents = cms.untracked.uint32({n_evt})",
             f"process.source.firstRun = cms.untracked.uint32({seed})",
             f'process.generator.comEnergy = cms.double({step_params["comEnergy"]})',
         ]
