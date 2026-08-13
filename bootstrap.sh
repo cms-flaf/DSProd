@@ -6,8 +6,14 @@
 #    inputFiles; unpack it and source its env.sh (which sets ANALYSIS_PATH to the unpack dir,
 #    builds the venv, and installs CMSSW from cvmfs on demand).
 action() {
-    if [ -f "dsprod_code.tar.gz" ]; then
-        mkdir -p dsprod_code && tar -xzf dsprod_code.tar.gz -C dsprod_code
+    # law postfixes shipped input files with a hash (e.g. dsprod_code_<hash>.tar.gz) and
+    # symlinks them into the job home (this script's CWD), so match by glob rather than a
+    # fixed name. Present => CRAB worker (no AFS): unpack + source the shipped env.sh.
+    # Absent => HTCondor (AFS mounted): source the workspace env.sh.
+    local tarball
+    tarball="$( ls dsprod_code*.tar.gz 2>/dev/null | head -1 )"
+    if [ -n "$tarball" ]; then
+        mkdir -p dsprod_code && tar -xzf "$tarball" -C dsprod_code
         source dsprod_code/env.sh
     else
         source "{{analysis_path}}/env.sh"
