@@ -5,10 +5,10 @@ conditions: config/conditions_Run3.yaml
 
 storage: /eos/user/k/kandroso/DSProd/XHHbbWW_test
 
-eras: [Run3_2022EE]
+eras: [ Run3_2022EE ]
 
 nano_versions:
-  Run3_2022EE: [v12, v15]
+  Run3_2022EE: [ v12, v15 ]
 
 first_step: LHEGS
 last_step: NANO

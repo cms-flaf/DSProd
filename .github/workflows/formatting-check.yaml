@@ -1,0 +1,88 @@
+name: Formatting Check
+
+on:
+  pull_request:
+    types: [ "opened", "synchronize", "reopened", "labeled" ]
+    branches: [ "main" ]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  formatting-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get changed files
+        id: changed_files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            console.log(`Total files changed: ${files.length}`);
+            const allChangedFiles = files.map(file => file.filename);
+            const existingChangedFiles = allChangedFiles.filter(file => {
+              try {
+                return require('fs').existsSync(file);
+              } catch (err) {
+                return false;
+              }
+            });
+
+            const fileTypeDict = {
+              'python': ['.py'],
+              'yaml': ['.yaml', '.yml', '.yamllint']
+            };
+
+            for (const [fileType, extensions] of Object.entries(fileTypeDict)) {
+              const changedFiles = existingChangedFiles.filter(file => extensions.some(ext => file.endsWith(ext)));
+              const hasFiles = changedFiles.length > 0 ? 'true' : 'false';
+              core.setOutput(`has${fileType.charAt(0).toUpperCase() + fileType.slice(1)}Files`, hasFiles);
+              core.setOutput(`${fileType}Files`, btoa(changedFiles.join('\n')));
+            }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        if: ${{ steps.changed_files.outputs.hasPythonFiles == 'true' || steps.changed_files.outputs.hasYamlFiles == 'true' }}
+        with:
+          python-version: '3.x'
+
+      - name: Install black
+        if: ${{ steps.changed_files.outputs.hasPythonFiles == 'true' }}
+        run: pip install black
+
+      - name: Check Python formatting
+        if: ${{ steps.changed_files.outputs.hasPythonFiles == 'true' }}
+        run: |
+          IFS=$'\n'
+          declare -a FILES=()
+          for file in $(echo ${{ steps.changed_files.outputs.pythonFiles }} | base64 -d); do
+            FILES+=("$file")
+            echo "$file"
+          done
+          black --check --diff "${FILES[@]}"
+
+      - name: Install yamllint
+        if: ${{ steps.changed_files.outputs.hasYamlFiles == 'true' }}
+        run: pip install yamllint
+
+      - name: Check YAML formatting
+        if: ${{ steps.changed_files.outputs.hasYamlFiles == 'true' }}
+        run: |
+          if [ ! -f ".yamllint" ]; then
+            echo "No yamllint configuration file found."
+            exit 1
+          fi
+          IFS=$'\n'
+          declare -a FILES=()
+          for file in $(echo ${{ steps.changed_files.outputs.yamlFiles }} | base64 -d); do
+            FILES+=("$file")
+            echo "$file"
+          done
+          yamllint -s -c .yamllint "${FILES[@]}"

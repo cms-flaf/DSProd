@@ -5,15 +5,15 @@ conditions: config/conditions_Run3.yaml
 # output root (FLAF consumes <storage>/nanoAOD_<version>/<era>/<process>/<point>/nano_<version>_<n>.root)
 storage: /eos/user/k/kandroso/DSProd/XHHbbWW
 
-eras: [Run3_2022EE]
+eras: [ Run3_2022EE ]
 
 # NanoAOD versions to produce per era (v12+v15 for 22-23BPix; v15-only for 2024)
 nano_versions:
-  Run3_2022: [v12, v15]
-  Run3_2022EE: [v12, v15]
-  Run3_2023: [v12, v15]
-  Run3_2023BPix: [v12, v15]
-  Run3_2024: [v15]
+  Run3_2022: [ v12, v15 ]
+  Run3_2022EE: [ v12, v15 ]
+  Run3_2023: [ v12, v15 ]
+  Run3_2023BPix: [ v12, v15 ]
+  Run3_2024: [ v15 ]
 
 first_step: LHEGS
 last_step: NANO

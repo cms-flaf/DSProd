@@ -6,3 +6,6 @@
 # python
 __pycache__/
 *.pyc
+
+# gfal-copy scratch
+*.gfal_copy_safe_tmp

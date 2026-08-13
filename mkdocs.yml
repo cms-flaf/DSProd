@@ -1,0 +1,71 @@
+site_name: DSProd
+site_description: >-
+  DSProd — a LAW-based tool for custom CMS Monte Carlo production (gridpack to NanoAOD)
+  for the FLAF analysis ecosystem.
+repo_name: cms-flaf/DSProd
+repo_url: https://github.com/cms-flaf/DSProd
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  font: false
+  features:
+    - content.action.edit
+    - content.action.view
+    - content.code.copy
+    - content.code.annotate
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - attr_list
+  - admonition
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tilde
+
+plugins:
+  - search
+
+extra_javascript:
+  - https://unpkg.com/mermaid@9.3/dist/mermaid.min.js
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Your first production: getting-started/first-production.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Tasks & LAW: concepts/tasks.md
+      - Backends: concepts/backends.md
+  - Configuration:
+      - Production setups: configuration/prod-setups.md
+      - Processes: configuration/processes.md
+      - Era conditions: configuration/conditions.md
+  - Contributing: contributing.md

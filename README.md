@@ -5,6 +5,11 @@ eras (2022–2024), generic over process type. Each physics process ships a cust
 module; gridpacks can be supplied (existing) or generated. Output NanoAOD feeds FLAF
 directly via the private-nano (HLepRare) convention.
 
+**Documentation:** see `docs/` (MkDocs Material). Build/preview with a throwaway venv:
+`python3 -m venv /tmp/mkdocs_env && /tmp/mkdocs_env/bin/pip install mkdocs-material && /tmp/mkdocs_env/bin/mkdocs serve`.
+Code style is checked in CI by the **Formatting Check** workflow (black + yamllint); run it
+locally with `bash run_tools/apply_format.sh` before committing.
+
 ## Status
 
 The framework and the core tasks are in place (MakeGridpack, RunProd, NanoMergeTask,
