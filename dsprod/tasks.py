@@ -310,7 +310,24 @@ class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     os.symlink(os.path.join("..", "..", "Utilities"), util_link)
                 except FileExistsError:
                     pass
+            # gridpack_generation.sh sets up its OWN CMSSW and aborts if a CMSSW environment is
+            # already active (it checks $CMSSW_BASE). On grid (CRAB) workers our env.sh sets up a
+            # cvmfs CMSSW to provide python3.9 for law, so strip the CMSSW / SCRAM / python-
+            # injection vars from the child env to give the script a clean shell. This is a no-op
+            # on lxplus, where DSProd's env sets up no CMSSW.
             env = dict(os.environ, PRODHOME=gen_bin)
+            for var in (
+                "CMSSW_BASE",
+                "CMSSW_VERSION",
+                "CMSSW_RELEASE_BASE",
+                "CMSSW_FWLITE_INCLUDE_PATH",
+                "CMSSW_SEARCH_PATH",
+                "CMSSW_DATA_PATH",
+                "LOCALRT",
+                "PYTHONPATH",
+                "PYTHONHOME",
+            ):
+                env.pop(var, None)
             ps_call(
                 [f"bash {gen_bin}/gridpack_generation.sh {name} {cards_dir}"],
                 shell=True,
