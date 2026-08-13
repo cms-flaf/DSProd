@@ -14,10 +14,13 @@ last_step: NANO
 events_per_job: 100
 files_per_merge: 10
 
-# CRAB config (submit-time write-check only; products go to the `storage:` EOS path above)
+# CRAB config. storage_site/out_lfn_base are a submit-time write-check only (products go to
+# the `storage:` EOS path above). whitelist is a real CMS *processing* site (generation jobs
+# have no input dataset, so any processing site works; T2_CH_CERN keeps them near CERNBOX).
 crab:
   storage_site: T3_CH_CERNBOX
   out_lfn_base: /store/user/kandroso/DSProd_crab
+  whitelist: [T2_CH_CERN]
   max_memory_mb: 2500
   max_cores: 1
 

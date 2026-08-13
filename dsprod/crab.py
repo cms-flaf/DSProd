@@ -257,13 +257,14 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         blacklist = list(self.crab_blacklist) or list(
             self._crab_cfg().get("blacklist") or []
         )
-        if not whitelist and not blacklist:
-            site, _ = self.crab_stageout_location()
-            whitelist = [site]
+        # DSProd generation jobs have no input dataset, so they can run at any CMS processing
+        # site. Do NOT auto-whitelist the *storage* site: it may not be a processing site
+        # (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in the list of known CMS
+        # Processing Site Names"). Restrict processing sites only when explicitly configured.
         if whitelist:
             config.crab.Site.whitelist = [str(s) for s in whitelist]
             config.crab.Site.ignoreGlobalBlacklist = True
-            config.crab.Data.ignoreLocality = True
-        elif blacklist:
+        if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]
+        config.crab.Data.ignoreLocality = True
         return config

@@ -131,6 +131,14 @@ _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 exec /cvmfs/cms.cern.ch/common/crab "$@"
 CRABWRAP
     chmod +x "$ANALYSIS_PATH/soft/bin/crab"
+    # law.contrib.cms's CMSSW sandbox runs bare `python`, but modern CMSSW ships only `python3`
+    # (and the venv's `python` breaks under a cmsenv). Provide a `python` -> python3 shim so it
+    # resolves to whichever python3 is active (CMSSW's inside the sandbox, the venv's outside).
+    cat > "$ANALYSIS_PATH/soft/bin/python" <<'PYSHIM'
+#!/bin/bash
+exec python3 "$@"
+PYSHIM
+    chmod +x "$ANALYSIS_PATH/soft/bin/python"
     export PATH="$ANALYSIS_PATH/soft/bin:$PATH"
   fi
 
