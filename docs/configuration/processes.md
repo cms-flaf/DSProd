@@ -62,29 +62,40 @@ fragment relative to its own location (`os.path.dirname(__file__)`), so a model 
 
 ## Model layout
 
-Each model is a subpackage of `dsprod_models` bundling its plugin, gen fragment, and cards. For
-`x_hh_bbww`:
+Inside `dsprod_models`, models are organized by **process → generator → center-of-mass energy**,
+with the energy as the *last* level so the plugin and the process/generator tooling above it are
+shared across energies. For `X_HH_bbWW`:
 
 ```
-dsprod_models/                 (the DSProdModels submodule, mounted at dsprod_models/)
-├── __init__.py                # imports every model subpackage (registration entry point)
-└── x_hh_bbww/
-    ├── __init__.py            # imports plugin.py
-    ├── plugin.py              # the ProcessCustomization subclass, @register_process
-    ├── fragment.py            # CMSSW gen fragment template
-    └── cards/                 # genproductions cards (proc_card, run_card, customizecards, extramodels)
+dsprod_models/                          (the DSProdModels submodule, mounted at dsprod_models/)
+├── __init__.py                         # walks the tree and loads every plugin.py (discovery)
+└── X_HH_bbWW/                          # process (matches the plugin name)
+    ├── README.md                       # process docs + links to the original sources
+    ├── filters/                        # (optional) final-state filters, shared across generators/energies
+    └── MadGraph5_aMCatNLO/             # generator (matches genproductions_scripts/bin + GridpackSpec.generator)
+        ├── plugin.py                   # the ProcessCustomization, @register_process (shared across energies)
+        ├── scripts/                    # (optional) prodcard-generation scripts (e.g. parametrized in mX)
+        ├── models/                     # (optional) custom generator models, when not centrally available
+        └── 13p6TeV/                    # center-of-mass energy (LAST level)
+            ├── cards/                  # genproductions cards (proc_card, run_card, customizecards, extramodels)
+            └── fragment.py             # CMSSW gen fragment
 ```
 
-The plugin fills in the per-point values (mass, decay channel, event count) when it renders these
-for a given point/era.
+Only `plugin.py`, `cards/`, `fragment.py`, and the READMEs are required; `filters/`, `scripts/`,
+and `models/` appear only when a model needs them. The plugin resolves its energy-specific inputs
+via `com_energy(era)` and fills in the per-point values (mass, …) when it renders the cards.
+
+`import dsprod_models` **walks this tree and loads every `plugin.py`**, so a model becomes
+available simply by adding its directory — there is no central registration list to edit.
 
 ## Adding a process
 
 In the [DSProdModels](https://github.com/cms-flaf/DSProdModels) repository:
 
-1. Add a subpackage `dsprod_models/<model>/` with `plugin.py` (a `ProcessCustomization` subclass
-   decorated with `@register_process`), a `fragment.py`, and a `cards/` directory.
-2. Import it from `dsprod_models/__init__.py`.
+1. Create `<process>/<generator>/` with a `plugin.py` — a `ProcessCustomization` subclass
+   decorated with `@register_process` and a unique `name`.
+2. Add a `<process>/<generator>/<comEnergy>/` folder with the `cards/` and `fragment.py` for each
+   energy you produce, and document the process in `<process>/README.md`.
 
 Then in DSProd, write a [production setup](prod-setups.md) with `process: <name>` and its
 `points:`, and advance the `dsprod_models` submodule pointer. No task code changes — the graph is
