@@ -1,11 +1,12 @@
 """Per-process customization interface.
 
 Each physics process (e.g. X->HH->bbWW) ships a `ProcessCustomization` subclass that
-knows how to turn a compact process configuration into concrete production points, how
-to obtain the gridpack (existing or generated), and how to render the CMSSW gen fragment.
-Everything process-specific lives here; the law tasks stay generic.
+knows how to turn a compact process configuration into concrete production points, where its
+gridpack lives in the store (and how to generate it if absent), and how to render the CMSSW gen
+fragment. Everything process-specific lives here; the law tasks stay generic.
 """
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -13,28 +14,15 @@ from typing import Optional
 
 @dataclass
 class GridpackSpec:
-    """How to obtain the gridpack for a point in a given era.
+    """How to *generate* the gridpack when it is not already available in the store.
 
-    mode == "existing": `location` points at a ready gridpack tarball (local path,
-        /eos path, or davs://... URL) to be imported/validated.
-    mode == "generate": run `genproductions_scripts/bin/<generator>/gridpack_generation.sh`
-        against the cards rendered from `cards_template`.
+    `MakeGridpack` runs `genproductions_scripts/bin/<generator>/gridpack_generation.sh`
+    against the cards rendered by the process (see `render_gridpack_cards`); `cards_template`
+    records where those cards live.
     """
 
-    mode: str
-    location: str = ""
     generator: str = "MadGraph5_aMCatNLO"
     cards_template: str = ""
-
-    def __post_init__(self):
-        if self.mode not in ("existing", "generate"):
-            raise ValueError(
-                f"GridpackSpec.mode must be existing|generate, got {self.mode!r}"
-            )
-        if self.mode == "existing" and not self.location:
-            raise ValueError("GridpackSpec(existing) requires a location")
-        if self.mode == "generate" and not self.cards_template:
-            raise ValueError("GridpackSpec(generate) requires a cards_template")
 
 
 @dataclass
@@ -58,7 +46,8 @@ class ProcessCustomization(ABC):
 
     @abstractmethod
     def gridpack(self, point: Point, era: str) -> GridpackSpec:
-        """Return how to obtain the gridpack for this point/era (existing or generate)."""
+        """Return how to *generate* this point's gridpack (used only when it is not already
+        available in the DSProdGridpacks store)."""
 
     @abstractmethod
     def gen_fragment(self, point: Point, era: str) -> str:
@@ -69,8 +58,15 @@ class ProcessCustomization(ABC):
         return point.name
 
     def gridpack_name(self, point: Point) -> str:
-        """Name for the generated gridpack / genproductions process (generate mode)."""
+        """Name of the gridpack (channel-independent; the resonance mass etc. live in it)."""
         return self.point_name(point)
+
+    def gridpack_rel_path(self, point: Point, era: str = None) -> str:
+        """Canonical path of this point's gridpack inside the DSProdGridpacks store, relative
+        to the `gridpacks` submodule root. `MakeGridpack` imports it from here if present
+        and otherwise generates it. Override to mirror the model's own directory convention.
+        """
+        return os.path.join(self.name, self.gridpack_name(point), "gridpack.tar.xz")
 
     def render_gridpack_cards(self, point: Point, out_dir: str) -> str:
         """Render the genproductions input cards for `point` into out_dir (generate mode).

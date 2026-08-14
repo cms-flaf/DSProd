@@ -19,14 +19,19 @@ batch tasks require it so the releases exist before jobs run.
 
 ### `MakeGridpack`
 
-Provides the gridpack for each point (one branch per point). Two modes, chosen by the process
-module's `GridpackSpec`:
+Provides the gridpack for each point (one branch per point). It derives the gridpack's canonical
+location in the [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store (from the
+process's `gridpack_rel_path`) and then:
 
-- **import** — copy an existing gridpack tarball (a cvmfs/EOS path or `davs://` URL) to the output;
-- **generate** — render the point's cards and run
+- **import** — if the gridpack is present there, copy it to the output (materializing the Git-LFS
+  content on demand);
+- **generate** — otherwise render the point's cards and run
   `genproductions_scripts/bin/<generator>/gridpack_generation.sh`.
 
-Output: `<storage>/gridpacks/<point>/gridpack.tar.xz`.
+The setup never names a gridpack — presence in DSProdGridpacks alone decides import vs. generate.
+
+Output: `<storage>/gridpacks/<gridpack-name>/gridpack.tar.xz` (keyed by the gridpack name, which is
+channel-independent, so points sharing a gridpack share it).
 
 !!! note "Clean environment for generation"
     `gridpack_generation.sh` sets up its own CMSSW and aborts if one is already active. DSProd

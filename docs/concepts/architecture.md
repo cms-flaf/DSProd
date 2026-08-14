@@ -41,15 +41,15 @@ The tasks never mention a physics process directly. Instead each process ships a
 
 A [production setup](../configuration/prod-setups.md) selects one module by its `process:` key.
 The models live in a separate submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels)
-(mounted at `dsprod_models/`, imported as the `dsprod_models` package); DSProd's registry
+(mounted at `models/`, imported as the `models` package); DSProd's registry
 (`dsprod/registry.py`) imports it to discover all registered plugins, and the interface lives in
 `dsprod/processes/base.py`. Adding a new physics process is therefore a matter of
 [writing one module](../configuration/processes.md) — plugin plus its cards/fragment — in
 DSProdModels; the task graph is untouched.
 
 Generated (or private) gridpacks can be kept under version control in a second submodule,
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `dsprod_gridpacks/`,
-Git LFS), and referenced from a setup's `gridpack:` field.
+[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `gridpacks/`,
+Git LFS); `MakeGridpack` locates a point's gridpack there automatically and generates it if absent.
 
 ## Per-era conditions
 
@@ -61,7 +61,7 @@ per-step overrides.
 
 ## Storage layout
 
-Products are written to the setup's `storage:` root (an EOS path) via LAW WLCG targets. The
+Products are written to `<fs.storage_base>/<output>` (an EOS path from the [user config](../configuration/settings.md) and the setup's `output`) via LAW WLCG targets. The
 final merged NanoAOD follows the private-nano (HLepRare) convention that FLAF consumes directly:
 
 ```

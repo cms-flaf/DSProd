@@ -1,0 +1,18 @@
+# DSProd global configuration: defaults for all runs. User-specific values (EOS area, CRAB
+# out_lfn_base, ...) are overridden in user_custom.yaml, merged on top of this file (scalars and
+# lists override; nested maps are deep-merged). See dsprod/config.py.
+
+# Remote storage.
+fs:
+  # law WLCG target base (protocol + host); storage/output paths are relative to it.
+  wlcg_base: davs://eoshome-USER.cern.ch:8444/
+  # root EOS directory for all DSProd products; a production writes to <storage_base>/<output>.
+  storage_base: /eos/user/U/USERNAME/DSProd
+
+# CRAB backend (submit-time write-check + processing-site choice only; products go to storage).
+crab:
+  storage_site: T3_CH_CERNBOX
+  out_lfn_base: /store/user/USERNAME/DSProd_crab
+  whitelist: [ T2_CH_CERN ]
+  max_memory_mb: 2500
+  max_cores: 1

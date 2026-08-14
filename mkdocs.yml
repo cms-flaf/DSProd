@@ -65,6 +65,7 @@ nav:
       - Tasks & LAW: concepts/tasks.md
       - Backends: concepts/backends.md
   - Configuration:
+      - Global & user config: configuration/settings.md
       - Production setups: configuration/prod-setups.md
       - Processes: configuration/processes.md
       - Era conditions: configuration/conditions.md

@@ -20,14 +20,14 @@ InstallCMSSW), runnable **local / HTCondor / CRAB**. CRAB has been validated end
 ```
 env.sh / bootstrap.sh / config/law.cfg   environment + law setup (CMSSW installed on demand)
 genproductions_scripts/                  submodule (GitLab cms-gen) — gridpack generators
-dsprod_models/                           submodule (cms-flaf/DSProdModels) — model plugins + cards + fragments
-dsprod_gridpacks/                        submodule (cms-flaf/DSProdGridpacks, Git LFS) — stored gridpacks
+models/                           submodule (cms-flaf/DSProdModels) — model plugins + cards + fragments
+gridpacks/                        submodule (cms-flaf/DSProdGridpacks, Git LFS) — stored gridpacks
 dsprod/
   tasks.py         Task base + HTCondorWorkflow + InstallCMSSW/MakeGridpack/RunProd/NanoMergeTask
   crab.py          CRAB backend (law.contrib.cms.CrabWorkflow); ships code via inputFiles
   run_step.py      cmsDriver step builder (GEN→…→NANO), per-step CMSSW
-  registry.py      process registry (imports dsprod_models to discover plugins)
-  processes/base.py  ProcessCustomization ABC (models themselves live in dsprod_models)
+  registry.py      process registry (imports models to discover plugins)
+  processes/base.py  ProcessCustomization ABC (models themselves live in models)
   tools.py         utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos, retries)
   grid_tools.py / law_gfal.py / law_wlcg.py
                    FLAF's gfal-CLI remote-file interface (works on WLCG workers, where the
@@ -52,25 +52,29 @@ law index              # list available tasks
 ## Running (backends)
 
 Every production task accepts `--workflow local|htcondor|crab`. A production is described by a
-setup YAML in `config/prod_setups/` (process, eras, nano versions, points, storage path).
+**backend-agnostic** setup YAML that lives with its model in the `models` submodule
+(`<process>/setups/`); the same setup runs on any backend.
 
 ```bash
 # local test
-law run MakeGridpack --setup config/prod_setups/Run3_XHHbbWW_test.yaml --workflow local
+law run MakeGridpack --setup models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml --workflow local
 
 # HTCondor (CERN batch)
-law run RunProd --setup <setup>.yaml --workflow htcondor
+law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow htcondor
 
 # CRAB (WLCG grid) — needs a VOMS proxy + a MyProxy credential valid >= 5 days
-law run MakeGridpack --setup config/prod_setups/Run3_XHHbbWW_crabtest.yaml --workflow crab
+law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow crab
 ```
 
-CRAB notes: DSProd owns all output/log I/O (products go to the setup's `storage:` EOS path via
-the gfal-CLI interface), so CRAB's own stageout/logs are forced off; the `crab:` block in the
-setup (`storage_site`, `out_lfn_base`, optional `whitelist`) is only a submit-time write check
-and the processing-site choice. WLCG workers have no AFS, so the code is shipped in the CRAB
-`inputFiles` tarball and law/luigi are vendored (`soft/vendor`, built once by `env.sh`) so the
-worker needs no PyPI.
+Storage area and CRAB site/resource settings are **not** in the setup — they live in
+`config/global.yaml`, overridden per-user in `config/user_custom.yaml` (`fs.storage_base`,
+`fs.wlcg_base`, the `crab:` block). Gridpacks are not named either: `MakeGridpack` locates a
+point's gridpack in the `gridpacks` (Git LFS) store and generates it if absent.
+
+CRAB notes: DSProd owns all output/log I/O (products go to the storage area via the gfal-CLI
+interface), so CRAB's own stageout/logs are forced off. WLCG workers have no AFS, so the code is
+shipped in the CRAB `inputFiles` tarball and law/luigi are vendored (`soft/vendor`, built once by
+`env.sh`) so the worker needs no PyPI.
 
 Full architecture and the McM-sourced per-era conditions: see the FLAF_all design doc
 `CLAUDE/reviews/2026-08-12_dsprod-mc-production-architecture.md`.

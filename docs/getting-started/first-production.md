@@ -6,14 +6,14 @@ confirm your environment works.
 
 ## The test setup
 
-`config/prod_setups/Run3_XHHbbWW_test.yaml` produces a single X→HH→bbWW resonant point
-(M-666, which is not a central mass, so the gridpack is **generated** rather than imported),
+`models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml` produces a single X→HH→bbWW resonant point
+(M-666, which is not a central mass, so no gridpack is stored for it and it is **generated**),
 100 events, one era:
 
 ```yaml
 process: X_HH_bbWW
 conditions: config/conditions_Run3.yaml
-storage: /eos/user/k/kandroso/DSProd/XHHbbWW_test
+output: XHHbbWW_test
 eras: [ Run3_2022EE ]
 nano_versions:
   Run3_2022EE: [ v12, v15 ]
@@ -28,7 +28,8 @@ points:
     events_total: 100
 ```
 
-Change `storage:` to your own EOS area before running.
+Set your EOS area once in `config/user_custom.yaml` (`fs.storage_base`); the setup only names the
+`output` sub-directory. See [Global & user config](../configuration/settings.md).
 
 ## Run it
 
@@ -38,21 +39,21 @@ backend:
 ```bash
 source env.sh
 law run NanoMergeTask \
-  --setup config/prod_setups/Run3_XHHbbWW_test.yaml \
+  --setup models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml \
   --workflow local
 ```
 
 What happens, in order:
 
 1. **`InstallCMSSW`** builds the CMSSW releases the era needs (first run only; cached afterwards).
-2. **`MakeGridpack`** generates the M-666 gridpack from the process
-   [cards template](../configuration/processes.md).
+2. **`MakeGridpack`** finds no stored M-666 gridpack in DSProdGridpacks, so it generates one from
+   the process [cards](../configuration/processes.md).
 3. **`RunProd`** runs the fused GEN→…→MiniAOD→NanoAOD chain and stages one nano per requested
    version.
 4. **`NanoMergeTask`** merges the per-seed nanos, verifies the event count, and drops the staged
    inputs.
 
-The merged output lands under your `storage:` path, ready for FLAF.
+The merged output lands under your storage area (`<fs.storage_base>/XHHbbWW_test`), ready for FLAF.
 
 !!! tip "Run just one stage"
     To stop earlier, run an upstream task directly, e.g. `law run MakeGridpack --setup … --workflow

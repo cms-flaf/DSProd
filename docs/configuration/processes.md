@@ -6,9 +6,9 @@ production points, how to obtain each point's gridpack, and how to render the CM
 
 The interface — the `ProcessCustomization` abstract base class — lives in DSProd itself
 (`dsprod/processes/base.py`). The **models** (plugins + cards + fragments) live in a separate
-submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `dsprod_models/`
-and imported as the Python package `dsprod_models`. The reference model is
-`dsprod_models/x_hh_bbww/` (X→HH→bbWW).
+submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `models/`
+and imported as the Python package `models`. The reference model is
+`models/X_HH_bbWW/` (X→HH→bbWW).
 
 ## The interface
 
@@ -28,46 +28,47 @@ class MyProcess(ProcessCustomization):
         """Expand the setup's `points:` (e.g. a mass scan) into concrete Point objects."""
 
     def gridpack(self, point: Point, era: str) -> GridpackSpec:
-        """Return how to obtain the gridpack: import an existing tarball or generate one."""
+        """Return how to *generate* the gridpack (used only when it is not already stored)."""
 
     def gen_fragment(self, point: Point, era: str) -> str:
         """Render the CMSSW gen fragment for this point/era and return its path."""
 ```
 
 The `@register_process` decorator registers the class under its `name`. Because
-`dsprod_models/__init__.py` imports every model subpackage, `get_process(name)` (which imports
-`dsprod_models`) then resolves it from any [production setup](prod-setups.md).
+`models/__init__.py` imports every model subpackage, `get_process(name)` (which imports
+`models`) then resolves it from any [production setup](prod-setups.md).
 
-### `GridpackSpec`
+### Gridpacks: locate-or-generate
 
-`gridpack()` returns a `GridpackSpec` with one of two modes:
+A point never names its gridpack. `MakeGridpack` computes the gridpack's canonical location in the
+[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store via
+`gridpack_rel_path(point)` and imports it if present, otherwise generates it. So the plugin
+provides two things:
 
-- `GridpackSpec(mode="existing", location=...)` — import a ready tarball (local path, `/eos`
-  path, or `davs://` URL);
-- `GridpackSpec(mode="generate", cards_template=..., generator="MadGraph5_aMCatNLO")` — generate
-  it from cards, via the named `genproductions_scripts` generator.
-
-For generate mode, override `render_gridpack_cards(point, out_dir)` to write the
-`genproductions` input cards (`proc_card` / `run_card` / `customizecards` / `extramodels`) into
-`out_dir`, and return the process `NAME`.
+- **where the gridpack lives** — override `gridpack_rel_path(point, era)` to return the path
+  (relative to the `gridpacks` store) mirroring the model's own directory convention;
+- **how to generate it** — `gridpack()` returns a
+  `GridpackSpec(generator="MadGraph5_aMCatNLO", cards_template=...)`, and
+  `render_gridpack_cards(point, out_dir)` writes the `genproductions` input cards (`proc_card` /
+  `run_card` / `customizecards` / `extramodels`) into `out_dir` and returns the process `NAME`.
 
 ### Optional overrides
 
-`point_name`, `gridpack_name`, `xsec`, `filter_efficiency`, and `validate` have sensible defaults
-and can be overridden when a process needs them.
+`point_name`, `gridpack_name`, `gridpack_rel_path`, `xsec`, `filter_efficiency`, and `validate`
+have sensible defaults and can be overridden when a process needs them.
 
-A plugin lives in the `dsprod_models` submodule and imports DSProd's framework classes, so it is
+A plugin lives in the `models` submodule and imports DSProd's framework classes, so it is
 usable only inside a DSProd checkout (not as a standalone library). It resolves its cards and
 fragment relative to its own location (`os.path.dirname(__file__)`), so a model is self-contained.
 
 ## Model layout
 
-Inside `dsprod_models`, models are organized by **process → generator → center-of-mass energy**,
+Inside `models`, models are organized by **process → generator → center-of-mass energy**,
 with the energy as the *last* level so the plugin and the process/generator tooling above it are
 shared across energies. For `X_HH_bbWW`:
 
 ```
-dsprod_models/                          (the DSProdModels submodule, mounted at dsprod_models/)
+models/                          (the DSProdModels submodule, mounted at models/)
 ├── __init__.py                         # walks the tree and loads every plugin.py (discovery)
 └── X_HH_bbWW/                          # process (matches the plugin name)
     ├── README.md                       # process docs + links to the original sources
@@ -85,7 +86,7 @@ Only `plugin.py`, `cards/`, `fragment.py`, and the READMEs are required; `filter
 and `models/` appear only when a model needs them. The plugin resolves its energy-specific inputs
 via `com_energy(era)` and fills in the per-point values (mass, …) when it renders the cards.
 
-`import dsprod_models` **walks this tree and loads every `plugin.py`**, so a model becomes
+`import models` **walks this tree and loads every `plugin.py`**, so a model becomes
 available simply by adding its directory — there is no central registration list to edit.
 
 ## Adding a process
@@ -98,5 +99,5 @@ In the [DSProdModels](https://github.com/cms-flaf/DSProdModels) repository:
    energy you produce, and document the process in `<process>/README.md`.
 
 Then in DSProd, write a [production setup](prod-setups.md) with `process: <name>` and its
-`points:`, and advance the `dsprod_models` submodule pointer. No task code changes — the graph is
+`points:`, and advance the `models` submodule pointer. No task code changes — the graph is
 generic.

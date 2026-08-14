@@ -1,25 +1,25 @@
 """Registry of process customization modules.
 
 Concrete `ProcessCustomization` subclasses register themselves with `@register_process`.
-The models live in the `dsprod_models` submodule (repo cms-flaf/DSProdModels); importing it
+The models live in the `models` submodule (repo cms-flaf/DSProdModels); importing it
 imports every model subpackage, so `get_process(name)` resolves any registered process. A
 `prod_setup` YAML selects one by its `process:` key.
 """
 
-# Note: do NOT import dsprod_models at module import time — its plugins import register_process
+# Note: do NOT import the models package at module import time — its plugins import register_process
 # back from this module (circular). Registration is triggered lazily by `_import_models()`.
 
 _registry = {}
 
 
 def _import_models():
-    """Import the `dsprod_models` package to trigger process registration."""
+    """Import the `models` package (the DSProdModels submodule) to trigger registration."""
     try:
-        import dsprod_models  # noqa: F401
+        import models  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
-            "could not import the `dsprod_models` package — is the DSProdModels submodule "
-            "checked out? Run `git submodule update --init dsprod_models`."
+            "could not import the `models` package — is the DSProdModels submodule checked out? "
+            "Run `git submodule update --init models`."
         ) from exc
 
 

@@ -3,10 +3,10 @@
 	url = ssh://git@gitlab.cern.ch:7999/cms-gen/genproductions_scripts.git
 	branch = master
 [submodule "dsprod_models"]
-	path = dsprod_models
+	path = models
 	url = git@github.com:cms-flaf/DSProdModels.git
 	branch = main
 [submodule "dsprod_gridpacks"]
-	path = dsprod_gridpacks
+	path = gridpacks
 	url = git@github.com:cms-flaf/DSProdGridpacks.git
 	branch = main

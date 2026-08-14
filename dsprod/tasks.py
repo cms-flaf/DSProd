@@ -21,6 +21,7 @@ import luigi
 import yaml
 
 from . import registry, run_step
+from .config import get_global
 from .crab import CrabWorkflow
 from .law_wlcg import WLCGFileSystem, WLCGFileTarget
 from .tools import (
@@ -41,11 +42,11 @@ _wlcg_fs = None
 
 def get_wlcg_fs():
     """DSProd remote FS, backed by the gfal-CLI interface (works on CRAB workers, where the
-    gfal2 python module law.contrib.gfal needs is unavailable). Base from law.cfg [wlcg_fs].
+    gfal2 python module law.contrib.gfal needs is unavailable). Base from global config `fs.wlcg_base`.
     """
     global _wlcg_fs
     if _wlcg_fs is None:
-        _wlcg_fs = WLCGFileSystem(law.config.get_expanded("wlcg_fs", "base"))
+        _wlcg_fs = WLCGFileSystem(get_global()["fs"]["wlcg_base"])
     return _wlcg_fs
 
 
@@ -57,6 +58,36 @@ def copy_param(ref_param, new_default):
 
 def is_remote_path(path):
     return path.startswith(_REMOTE_PREFIXES)
+
+
+def _is_lfs_pointer(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(42).startswith(b"version https://git-lfs")
+    except OSError:
+        return False
+
+
+def gridpack_store_path(repo_root, rel):
+    """Local path of a gridpack stored in the DSProdGridpacks checkout at `repo_root` (relative
+    path `rel`), materializing its Git-LFS content on demand. Returns None if the submodule is not
+    checked out (e.g. a bare grid worker) or the gridpack is simply not there — the caller then
+    generates it."""
+    if not os.path.isdir(repo_root):
+        return None
+    path = os.path.join(repo_root, rel)
+    if not os.path.exists(path):
+        return None
+    if _is_lfs_pointer(path):
+        try:
+            ps_call(
+                [f"git -C {repo_root} lfs pull --include={rel}"], shell=True, verbose=1
+            )
+        except Exception:
+            return None
+    if not os.path.exists(path) or _is_lfs_pointer(path):
+        return None
+    return path
 
 
 def runprod_branches(eras, points):
@@ -165,8 +196,16 @@ class Task(law.Task):
             return WLCGFileTarget(path, fs=get_wlcg_fs())
         return law.LocalFileTarget(path)
 
+    def storage_root(self):
+        """Root EOS dir for this production: <fs.storage_base> / <setup `output`> (the setup names
+        only the sub-directory; the user's storage area lives in global/user_custom config).
+        """
+        base = get_global()["fs"]["storage_base"]
+        name = self.prod_setup.get("output", self.setup_name)
+        return os.path.join(base, name)
+
     def storage_path(self, *parts):
-        return os.path.join(self.prod_setup["storage"], *parts)
+        return os.path.join(self.storage_root(), *parts)
 
     def storage_target(self, *parts):
         return self.target(self.storage_path(*parts))
@@ -276,19 +315,21 @@ class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         return {i: point for i, point in enumerate(self.points)}
 
     def output(self):
-        name = self.process.point_name(self.branch_data)
+        name = self.process.gridpack_name(self.branch_data)
         return self.storage_target("gridpacks", name, "gridpack.tar.xz")
 
     def run(self):
-        spec = self.process.gridpack(self.branch_data)
-        if spec.mode == "existing":
-            src = self.target(spec.location)
-            with src.localize("r") as local_src, self.output().localize(
-                "w"
-            ) as out_local:
-                shutil.copy(local_src.abspath, out_local.abspath)
+        point = self.branch_data
+        # The gridpack's canonical location is derived (never configured in the setup): a path in
+        # the DSProdGridpacks store. Import it from there if present, otherwise generate it.
+        repo_root = os.path.join(self.ana_path(), "gridpacks")
+        rel = self.process.gridpack_rel_path(point)
+        stored = gridpack_store_path(repo_root, rel)
+        if stored is not None:
+            with self.output().localize("w") as out_local:
+                shutil.copy(stored, out_local.abspath)
         else:
-            self._generate(spec)
+            self._generate(self.process.gridpack(point))
 
     def _generate(self, spec):
         """Render the process cards and run genproductions_scripts gridpack_generation.sh."""

@@ -2,7 +2,7 @@
 
 Every production task accepts `--workflow <backend>`. The three backends differ only in *where*
 the jobs run — the task logic, and all remote EOS I/O, are identical. DSProd always writes its
-products to the setup's `storage:` EOS path itself, so the batch systems are used purely for
+products to the production's storage area (see [settings](../configuration/settings.md)) itself, so the batch systems are used purely for
 compute.
 
 | `--workflow` | Runs on | Use for |
@@ -38,14 +38,15 @@ where CERN HTCondor alone does not provide enough resources.
 Because WLCG workers have **no AFS**, the DSProd code (plus `genproductions_scripts` and the
 vendored `law`/`luigi`) is shipped as a CRAB `inputFiles` tarball, built at submit time and
 unpacked by `bootstrap.sh`; CMSSW is set up from cvmfs on the worker. DSProd owns all output and
-log I/O (products go to the `storage:` EOS path via the gfal-CLI interface), so CRAB's own
+log I/O (products go to the production's storage area via the gfal-CLI interface), so CRAB's own
 stageout and log transfer are forced off.
 
 ### Requirements
 
 - a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see
   [Installation](../getting-started/installation.md));
-- a `crab:` block in the [production setup](../configuration/prod-setups.md):
+- a `crab:` block in the [global / user config](../configuration/settings.md) — **not** in the
+  production setup, so the same setup runs on any backend:
 
 ```yaml
 crab:
@@ -58,9 +59,9 @@ crab:
 
 !!! warning "storage_site vs. whitelist"
     `storage_site`/`out_lfn_base` are only a submit-time write-check — the real products go to the
-    `storage:` EOS path. `whitelist` must be a genuine CMS **processing** site: do **not** put the
-    storage site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission. Generation jobs have
-    no input dataset, so any processing site works; `T2_CH_CERN` keeps them near CERNBOX.
+    production's storage area. `whitelist` must be a genuine CMS **processing** site: do **not** put
+    the storage site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission. Generation jobs
+    have no input dataset, so any processing site works; `T2_CH_CERN` keeps them near CERNBOX.
 
 ### Debugging CRAB jobs
 

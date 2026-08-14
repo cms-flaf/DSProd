@@ -7,12 +7,15 @@ AFS, so the DSProd code + genproductions_scripts are shipped as a CRAB ``inputFi
 (built at submit time) and unpacked by ``bootstrap.sh``; CMSSW is set up on the worker from
 cvmfs on demand (our releases are standard central releases).
 
-Config (in the prod_setup YAML, ``crab:`` section)::
+Site/resource settings live in the merged global config (``config/global.yaml`` +
+``user_custom.yaml``), NOT the production setup, so a setup is identical for htcondor and crab::
 
     crab:
-      storage_site: T3_CH_CERNBOX            # Site.storageSite (submit-time write-check only)
+      storage_site: T3_CH_CERNBOX             # Site.storageSite (submit-time write-check only)
       out_lfn_base: /store/user/<you>/DSProd  # Data.outLFNDirBase (write-check only)
-      # optional: whitelist: [T2_CH_CERN], blacklist: [...], max_memory_mb: 4000, max_cores: 4
+      whitelist: [ T2_CH_CERN ]               # optional; CMS processing sites
+      max_memory_mb: 2500                      # optional
+      max_cores: 1                             # optional
 """
 
 import math
@@ -32,7 +35,7 @@ def build_code_tarball(ana_path, out_path):
     """Tar the DSProd code needed on a WLCG worker (no AFS there)."""
     includes = [
         "dsprod",
-        "dsprod_models",  # model plugins + cards + fragments (DSProdModels submodule)
+        "models",  # model plugins + cards + fragments (DSProdModels submodule)
         "config",
         "env.sh",
         "bootstrap.sh",
@@ -162,7 +165,12 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     }
 
     def _crab_cfg(self):
-        return self.prod_setup.get("crab") or {}
+        """CRAB site/resource settings from the merged global config (`config/global.yaml` +
+        `user_custom.yaml`), NOT the production setup — so a setup is backend-agnostic and
+        identical for htcondor and crab."""
+        from .config import get_global
+
+        return get_global().get("crab", {}) or {}
 
     def _ensure_crab_pset(self, n_threads):
         """Minimal PSet whose numberOfThreads matches JobType.numCores (CRAB requires it)."""
@@ -197,9 +205,10 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         lfn = cfg.get("out_lfn_base")
         if not site or not lfn:
             raise RuntimeError(
-                "CRAB needs crab.storage_site and crab.out_lfn_base in the prod_setup "
+                "CRAB needs storage_site and out_lfn_base in config/law.cfg [crab] "
                 "(submit-time write-check only; DSProd products go to the `storage:` EOS path). "
-                "Example: crab: {storage_site: T3_CH_CERNBOX, out_lfn_base: /store/user/$USER/DSProd}"
+                "Example:\n  [crab]\n  storage_site: T3_CH_CERNBOX\n"
+                "  out_lfn_base: /store/user/$USER/DSProd"
             )
         return str(site), str(lfn)
 
