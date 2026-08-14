@@ -12,9 +12,10 @@ backend. Only the compute knobs are configurable, in the merged global config
 (``config/global.yaml`` + ``user_custom.yaml``), never in a production setup::
 
     crab:
-      whitelist: [ T2_CH_CERN ]   # CMS processing site(s)
       max_memory_mb: 2500
       max_cores: 1
+      # whitelist: [ ... ]   # optional; empty (default) = all CMS processing sites
+      # blacklist: [ ... ]   # optional; exclude sites that fail to reach the storage
 """
 
 import math
@@ -155,7 +156,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     crab_whitelist = law.CSVParameter(
         default=(),
         significant=False,
-        description="CRAB Site.whitelist (empty = storage site)",
+        description="CRAB Site.whitelist; empty (default) = all CMS processing sites",
     )
     crab_blacklist = law.CSVParameter(default=(), significant=False)
 
@@ -279,14 +280,18 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         blacklist = list(self.crab_blacklist) or list(
             self._crab_cfg().get("blacklist") or []
         )
-        # DSProd generation jobs have no input dataset, so they can run at any CMS processing
-        # site. Do NOT auto-whitelist the *storage* site: it may not be a processing site
-        # (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in the list of known CMS
-        # Processing Site Names"). Restrict processing sites only when explicitly configured.
+        # DSProd generation jobs have no real input dataset, so they can run at ANY CMS processing
+        # site. Leaving the whitelist empty (the default) is therefore the widest possible pool —
+        # setting one can only ever narrow it. Do NOT auto-whitelist the *storage* site either: it
+        # may not be a processing site (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in
+        # the list of known CMS Processing Site Names").
         if whitelist:
             config.crab.Site.whitelist = [str(s) for s in whitelist]
-            config.crab.Site.ignoreGlobalBlacklist = True
         if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]
+        # Keep CMS's global blacklist of known-broken sites in force unless explicitly waived:
+        # with an open site pool it is the main protection against burning jobs at bad sites.
+        if self._crab_cfg().get("ignore_global_blacklist", False):
+            config.crab.Site.ignoreGlobalBlacklist = True
         config.crab.Data.ignoreLocality = True
         return config

@@ -50,7 +50,6 @@ stageout and log transfer are forced off.
 
 ```yaml
 crab:
-  whitelist: [ T2_CH_CERN ]   # a real CMS *processing* site
   max_memory_mb: 2500
   max_cores: 1
 ```
@@ -61,10 +60,30 @@ crab:
     it transfers nothing; DSProd fills those in automatically as a submit-time formality, so there
     is nothing to configure and no second storage area to keep in sync.
 
-!!! warning "whitelist must be a processing site"
-    `whitelist` must be a genuine CMS **processing** site: do **not** put a storage-only site (e.g.
-    `T3_CH_CERNBOX`) there, or CRAB refuses the submission. Generation jobs have no input dataset,
-    so any processing site works; `T2_CH_CERN` keeps them near CERNBOX.
+### Site selection
+
+DSProd jobs carry **no real input dataset** (they generate their own events, and the CRAB config
+sets `ignoreLocality`), so nothing ties them to a particular site. By default **no whitelist is
+set**, which means CRAB may schedule them at *any* CMS processing site — the widest possible pool.
+Adding a whitelist can only narrow it, so do not add one just to "get more sites".
+
+Restricting is worth it in two situations:
+
+- **Sites that cannot reach your storage.** Unlike a normal CRAB task, DSProd does its own stageout:
+  the job writes its product over the WAN to `fs_default` (e.g. CERNBox via `davs://`) instead of to
+  local site storage. A worker without outbound access to that endpoint will run the full payload
+  and only then fail on the copy. Gridpack *generation* likewise needs outbound network to fetch
+  generator tarballs. Put such sites in `blacklist` as you find them.
+- **Keeping jobs near the storage**, e.g. `whitelist: [ T2_CH_CERN ]` for short tests against
+  CERNBox — convenient for debugging, but it throttles throughput, so avoid it for real production.
+
+CMS's **global blacklist** of known-broken sites stays in force; `ignore_global_blacklist: true`
+waives it, which is not recommended with an open site pool.
+
+!!! warning "whitelist entries must be processing sites"
+    If you do set a `whitelist`, every entry must be a genuine CMS **processing** site: do **not**
+    put a storage-only site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission with
+    "not in the list of known CMS Processing Site Names".
 
 ### Debugging CRAB jobs
 

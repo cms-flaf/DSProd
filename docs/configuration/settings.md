@@ -58,14 +58,20 @@ A production writes to `<fs_default>/<output>`, where `output` is named by the
 
 ```yaml
 crab:
-  whitelist: [ T2_CH_CERN ]   # CMS processing site(s) for the jobs
   max_memory_mb: 2500
   max_cores: 1
+  # whitelist: [ T2_CH_CERN, ... ]  # optional; empty (default) = all CMS processing sites
+  # blacklist: [ ... ]              # optional; exclude misbehaving sites
+  # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
 ```
 
 The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),
 so there is no CRAB output location to configure. These can also be overridden per run on the
 command line (e.g. `--crab-whitelist`, `--crab-memory`).
+
+**No whitelist by default.** DSProd jobs have no real input dataset, so they can run at any CMS
+processing site; leaving the whitelist empty gives the widest pool, and setting one can only narrow
+it. See [Backends](../concepts/backends.md#site-selection) for when restricting is worthwhile.
 
 !!! note "On grid workers"
     Being git-ignored does not mean being absent from jobs: the CRAB code tarball ships the whole

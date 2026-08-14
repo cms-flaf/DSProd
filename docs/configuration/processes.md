@@ -6,9 +6,9 @@ production points, how to obtain each point's gridpack, and how to render the CM
 
 The interface — the `ProcessCustomization` abstract base class — lives in DSProd itself
 (`dsprod/processes/base.py`). The **models** (plugins + cards + fragments) live in a separate
-submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `models/`
-and imported as the Python package `models`. The reference model is
-`models/X_HH_bbWW/` (X→HH→bbWW).
+submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `models/`.
+That tree is **content, not a Python package** — it has no `__init__.py` anywhere; DSProd loads each
+`plugin.py` straight from its path. The reference model is `models/X_HH_bbWW/` (X→HH→bbWW).
 
 ## The interface
 
@@ -34,9 +34,9 @@ class MyProcess(ProcessCustomization):
         """Render the CMSSW gen fragment for this point/era and return its path."""
 ```
 
-The `@register_process` decorator registers the class under its `name`. Because
-`models/__init__.py` imports every model subpackage, `get_process(name)` (which imports
-`models`) then resolves it from any [production setup](prod-setups.md).
+The `@register_process` decorator registers the class under its `name`. `get_process(name)`
+walks the models tree, loads every `plugin.py`, and then resolves the name from any
+[production setup](prod-setups.md).
 
 ### Gridpacks: locate-or-generate
 
@@ -68,8 +68,7 @@ with the energy as the *last* level so the plugin and the process/generator tool
 shared across energies. For `X_HH_bbWW`:
 
 ```
-models/                          (the DSProdModels submodule, mounted at models/)
-├── __init__.py                         # walks the tree and loads every plugin.py (discovery)
+models/                                 (the DSProdModels submodule, mounted at models/)
 └── X_HH_bbWW/                          # process (matches the plugin name)
     ├── README.md                       # process docs + links to the original sources
     ├── filters/                        # (optional) final-state filters, shared across generators/energies
@@ -86,8 +85,8 @@ Only `plugin.py`, `cards/`, `fragment.py`, and the READMEs are required; `filter
 and `models/` appear only when a model needs them. The plugin resolves its energy-specific inputs
 via `com_energy(era)` and fills in the per-point values (mass, …) when it renders the cards.
 
-`import models` **walks this tree and loads every `plugin.py`**, so a model becomes
-available simply by adding its directory — there is no central registration list to edit.
+DSProd **walks this tree and loads every `plugin.py`**, so a model becomes available simply by
+adding its directory — there is no central registration list, and no `__init__.py`, to edit.
 
 ## Adding a process
 

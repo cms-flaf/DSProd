@@ -11,7 +11,14 @@
 
 # CRAB backend: compute settings only. CRAB never stages out (DSProd owns all I/O), so there is
 # no CRAB output location to configure.
+#
+# No `whitelist` by default: DSProd jobs have no real input dataset, so they may run at ANY CMS
+# processing site — an empty whitelist is the widest pool, and setting one can only narrow it.
+# CMS's global blacklist of known-broken sites stays in force.
+# Optional keys:
+#   whitelist: [ T2_CH_CERN, ... ]  restrict to these processing sites
+#   blacklist: [ ... ]              exclude sites (e.g. ones that cannot reach your storage)
+#   ignore_global_blacklist: true   waive CMS's known-broken-site list (not recommended)
 crab:
-  whitelist: [ T2_CH_CERN ] # CMS processing site(s) for the jobs
   max_memory_mb: 2500
   max_cores: 1
