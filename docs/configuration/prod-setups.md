@@ -63,7 +63,8 @@ There is **no `gridpack:` field** and **no `crab:` block** — see below.
 ## Points and gridpacks
 
 The `points` list is interpreted by the process's `enumerate_points`, so the recognised keys are
-process-specific. For `X_HH_bbWW` each point has a `name`, `mass`, `spin`, and `events_total`.
+process-specific. For `X_HH_bbWW` each point has a `name`, `mass`, `spin`, `channel` (`SL` or `DL`)
+and `events_total`.
 
 A point does **not** name its gridpack. `MakeGridpack` derives the gridpack's canonical location
 in the [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store from the process,
@@ -80,5 +81,12 @@ that point generate. Nothing in the setup changes either way.
 
 | Setup | Purpose |
 |---|---|
-| `X_HH_bbWW/setups/Run3_XHHbbWW.yaml` | Full production (M-800 gridpack imported from DSProdGridpacks). |
+| `X_HH_bbWW/setups/Run3_2023_XHHbbWW.yaml` | X→HH→bbWW SL+DL for Run3_2023 (44 samples, 6.3 M events). |
+| `X_HH_bbWW/setups/Run3_2023BPix_XHHbbWW.yaml` | Same for Run3_2023BPix (44 samples, 3.4 M events). |
+| `X_HH_bbWW/setups/Run3_2024_XHHbbWW.yaml` | Same for Run3_2024, covering 2024+2025+2026 (44 samples, 86.3 M events). |
+| `X_HH_bbWW/setups/Run3_XHHbbWW.yaml` | Single-point production (M-800 SL, gridpack imported from DSProdGridpacks). |
 | `X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml` | Tiny end-to-end test (M-666, generated, 100 events). |
+
+**One setup per era.** `events_total` is a property of a point, so a production whose statistics
+scale with the era's luminosity needs its own setup per era — which also lets each era be launched,
+and finish, independently.

@@ -19,7 +19,9 @@ batch tasks require it so the releases exist before jobs run.
 
 ### `MakeGridpack`
 
-Provides the gridpack for each point (one branch per point). It derives the gridpack's canonical
+Provides each **distinct** gridpack — one branch per gridpack, not per point, since several points
+can share one (the SL and DL channels of a mass point use the same gridpack, and one branch per
+point would make them race on the same output). It derives the gridpack's canonical
 location in the [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store (from the
 process's `gridpack_rel_path`) and then:
 

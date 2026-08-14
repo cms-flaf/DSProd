@@ -15,14 +15,16 @@ nested maps are deep-merged (see `dsprod/config.py`).
 
 ## Create your `config/user_custom.yaml`
 
-The one **required** setting is `fs_default` — the file system all products are written to:
+Optional: `global.yaml` already points `fs_default` at the **shared production area at FNAL**, so a
+fresh checkout writes there. Create `user_custom.yaml` when you want your own space instead — always
+do this for tests, so you do not write into the production tree:
 
 ```yaml
 # config/user_custom.yaml
 fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
 ```
 
-Replace the host and path with your own EOS area. Optionally override any `global.yaml` value in
+Replace the host and path with your own EOS area. You can override any `global.yaml` value in
 the same file, e.g. the CRAB processing site:
 
 ```yaml

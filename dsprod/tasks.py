@@ -175,6 +175,24 @@ class Task(law.Task):
     def eras(self):
         return self.prod_setup["eras"]
 
+    def gridpack_points(self):
+        """One representative point per *distinct* gridpack, in setup order.
+
+        Points sharing a gridpack (same `gridpack_name`) collapse to one entry — the single source
+        of MakeGridpack branch numbering, mirrored by `gridpack_index()`.
+        """
+        seen = {}
+        for point in self.points:
+            seen.setdefault(self.process.gridpack_name(point), point)
+        return list(seen.values())
+
+    def gridpack_index(self):
+        """gridpack name -> MakeGridpack branch id."""
+        return {
+            self.process.gridpack_name(p): i
+            for i, p in enumerate(self.gridpack_points())
+        }
+
     def nano_versions(self, era):
         """NanoAOD versions to produce for `era` (per-era override, else global default)."""
         nv = self.prod_setup.get("nano_versions", {})
@@ -320,12 +338,17 @@ class InstallCMSSW(Task, law.LocalWorkflow):
 
 
 class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
-    """Provide the gridpack for each point: import an existing one, or generate a new one."""
+    """Provide each *distinct* gridpack: import it from the store, or generate it.
+
+    Branches over gridpacks, not points: several points can share one gridpack (e.g. the decay
+    channels of X->HH->bbWW, where the Higgses leave the generator undecayed), and one branch per
+    point would make them race on the same output.
+    """
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
 
     def create_branch_map(self):
-        return {i: point for i, point in enumerate(self.points)}
+        return dict(enumerate(self.gridpack_points()))
 
     def output(self):
         name = self.process.gridpack_name(self.branch_data)
@@ -417,12 +440,14 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     def requires(self):
         era, pi, _ = self.branch_data
+        # MakeGridpack branches over distinct gridpacks, so map this point to its gridpack branch
+        gp_branch = self.gridpack_index()[self.process.gridpack_name(self.points[pi])]
         return {
             "voms": CreateVomsProxy.req(self),
             "cmssw": InstallCMSSW.req(
                 self, branch=self.eras.index(era), workflow="local"
             ),
-            "gridpack": MakeGridpack.req(self, branch=pi),
+            "gridpack": MakeGridpack.req(self, branch=gp_branch),
         }
 
     def _staged_target(self, era, point, version, seed):

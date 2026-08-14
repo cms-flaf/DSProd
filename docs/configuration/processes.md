@@ -78,10 +78,10 @@ models/                                 (the DSProdModels submodule, mounted at 
         ├── models/                     # (optional) custom generator models, when not centrally available
         └── 13p6TeV/                    # center-of-mass energy (LAST level)
             ├── cards/                  # genproductions cards (proc_card, run_card, customizecards, extramodels)
-            └── fragment.py             # CMSSW gen fragment
+            └── fragments/              # CMSSW gen fragment(s) — one per decay channel
 ```
 
-Only `plugin.py`, `cards/`, `fragment.py`, and the READMEs are required; `filters/`, `scripts/`,
+Only `plugin.py`, `cards/`, a gen fragment, and the READMEs are required; `filters/`, `scripts/`,
 and `models/` appear only when a model needs them. The plugin resolves its energy-specific inputs
 via `com_energy(era)` and fills in the per-point values (mass, …) when it renders the cards.
 

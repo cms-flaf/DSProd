@@ -4,10 +4,15 @@
 # git-ignored and merged on top of this file (scalars and lists override; nested maps are
 # deep-merged). See dsprod/config.py and docs/configuration/settings.md.
 #
-# Required in user_custom.yaml:
-#   fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
 # `fs_default` is the single file system all products are written to, whatever the workflow
 # backend (local / htcondor / crab). A plain /... path selects a local file system instead.
+# The default below is the shared production area at FNAL (the LPC group area FLAF also uses);
+# override it in user_custom.yaml to write to your own space, e.g.
+#   fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
+#
+# NOTE: xrootd, not davs — davs writes to cmseos.fnal.gov fail from CERN (dCache pool-redirect
+# DNS), while xrootd reads and writes both work. Same choice as FLAF's fs_anaCacheTuple.
+fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 
 # CRAB backend: compute settings only. CRAB never stages out (DSProd owns all I/O), so there is
 # no CRAB output location to configure.

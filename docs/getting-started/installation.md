@@ -39,7 +39,9 @@ production models; a run fails with a clear error if it is not checked out.
 ## Create your user configuration
 
 `config/user_custom.yaml` holds your personal settings and is **not** part of the repository (it is
-git-ignored). Create it after cloning, with at least the file system all products are written to:
+git-ignored). It is optional — `config/global.yaml` already points `fs_default` at the shared FNAL
+production area — but create it before running anything of your own, so tests do not write into the
+production tree:
 
 ```yaml
 # config/user_custom.yaml
