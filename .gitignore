@@ -9,3 +9,6 @@ __pycache__/
 
 # gfal-copy scratch
 *.gfal_copy_safe_tmp
+
+# user-specific config (see docs/configuration/settings.md)
+/config/user_custom.yaml

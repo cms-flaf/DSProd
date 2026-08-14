@@ -45,23 +45,26 @@ stageout and log transfer are forced off.
 
 - a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see
   [Installation](../getting-started/installation.md));
-- a `crab:` block in the [global / user config](../configuration/settings.md) — **not** in the
-  production setup, so the same setup runs on any backend:
+- optionally, a `crab:` block in the [global / user config](../configuration/settings.md) — **not**
+  in the production setup, so the same setup runs on any backend:
 
 ```yaml
 crab:
-  storage_site: T3_CH_CERNBOX             # Site.storageSite (submit-time write-check only)
-  out_lfn_base: /store/user/<you>/DSProd  # Data.outLFNDirBase (write-check only)
-  whitelist: [ T2_CH_CERN ]               # a real CMS *processing* site
+  whitelist: [ T2_CH_CERN ]   # a real CMS *processing* site
   max_memory_mb: 2500
   max_cores: 1
 ```
 
-!!! warning "storage_site vs. whitelist"
-    `storage_site`/`out_lfn_base` are only a submit-time write-check — the real products go to the
-    production's storage area. `whitelist` must be a genuine CMS **processing** site: do **not** put
-    the storage site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission. Generation jobs
-    have no input dataset, so any processing site works; `T2_CH_CERN` keeps them near CERNBOX.
+!!! note "No CRAB output location"
+    The `crab:` block holds **compute settings only**. Products go to `fs_default` — the same
+    location as with any other backend. CRAB does demand a `storageSite`/`outLFNDirBase` even when
+    it transfers nothing; DSProd fills those in automatically as a submit-time formality, so there
+    is nothing to configure and no second storage area to keep in sync.
+
+!!! warning "whitelist must be a processing site"
+    `whitelist` must be a genuine CMS **processing** site: do **not** put a storage-only site (e.g.
+    `T3_CH_CERNBOX`) there, or CRAB refuses the submission. Generation jobs have no input dataset,
+    so any processing site works; `T2_CH_CERN` keeps them near CERNBOX.
 
 ### Debugging CRAB jobs
 

@@ -42,7 +42,7 @@ grid, for large productions).
 already understands:
 
 ```
-<storage>/nanoAOD_<version>/<era>/<process-point>/nano_<version>_<n>.root
+<fs_default>/<output>/nanoAOD_<version>/<era>/<process-point>/nano_<version>_<n>.root
 ```
 
 So once a production finishes, its samples are consumed by FLAF as ordinary NanoAOD inputs — no

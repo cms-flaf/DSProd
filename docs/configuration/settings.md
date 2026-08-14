@@ -1,49 +1,76 @@
 # Global & user configuration
 
-Deployment and site settings — the remote storage area and the CRAB backend configuration — are
-kept **out of the production setups** so that a setup is backend-agnostic and not tied to one user.
-They follow the same pattern as FLAF: a committed `config/global.yaml` with the defaults, merged
-with a `config/user_custom.yaml` holding the **user-specific overrides**.
+Deployment settings — where products are written, and the CRAB compute knobs — are kept **out of
+the production setups**, so a setup is backend-agnostic and not tied to one user. They follow the
+same pattern as FLAF: a committed `config/global.yaml` with the defaults, merged with a
+`config/user_custom.yaml` holding your **user-specific** values.
 
 `config/user_custom.yaml` is layered on top of `config/global.yaml`: scalars and lists override,
 nested maps are deep-merged (see `dsprod/config.py`).
 
-## `config/global.yaml` (defaults)
+!!! important "`user_custom.yaml` is not in the repository"
+    It is user-dependent, so it is **git-ignored** and you create it yourself after cloning (see
+    the example below). `global.yaml` is committed and holds only settings that are the same for
+    everyone.
+
+## Create your `config/user_custom.yaml`
+
+The one **required** setting is `fs_default` — the file system all products are written to:
 
 ```yaml
-fs:
-  wlcg_base: davs://eoshome-USER.cern.ch:8444/   # law WLCG target base (protocol + host)
-  storage_base: /eos/user/U/USERNAME/DSProd      # root EOS dir for all products
+# config/user_custom.yaml
+fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
+```
+
+Replace the host and path with your own EOS area. Optionally override any `global.yaml` value in
+the same file, e.g. the CRAB processing site:
+
+```yaml
+fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
 
 crab:
-  storage_site: T3_CH_CERNBOX             # Site.storageSite (submit-time write-check only)
-  out_lfn_base: /store/user/USERNAME/DSProd_crab  # Data.outLFNDirBase (write-check only)
-  whitelist: [ T2_CH_CERN ]               # CMS processing site(s)
+  whitelist: [ T2_CH_CERN ]
+  max_cores: 1
+```
+
+## `fs_default`
+
+`fs_default` uses the FLAF path notation: **one URI carrying protocol, host and base path**. All
+product paths are relative to it, so the storage area lives in exactly one place.
+
+```yaml
+fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/   # remote (WLCG/gfal)
+fs_default: /eos/user/k/kandroso/DSProd/                                # local file system
+```
+
+A value starting with `/` selects a local file system; anything else is treated as a remote
+(WLCG) one, accessed through the gfal-CLI interface.
+
+!!! note "One file system for every backend"
+    `fs_default` is used by **all** backends. A production submitted with `--workflow crab` writes
+    exactly where the same setup would write with `--workflow local` or `htcondor` — there is no
+    separate CRAB output location. (Later, more granular `fs_*` keys can be added, as in FLAF.)
+
+A production writes to `<fs_default>/<output>`, where `output` is named by the
+[production setup](prod-setups.md).
+
+## `config/global.yaml` (committed defaults)
+
+```yaml
+crab:
+  whitelist: [ T2_CH_CERN ]   # CMS processing site(s) for the jobs
   max_memory_mb: 2500
   max_cores: 1
 ```
 
-## `config/user_custom.yaml` (your overrides)
+The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),
+so there is no CRAB output location to configure. These can also be overridden per run on the
+command line (e.g. `--crab-whitelist`, `--crab-memory`).
 
-Edit this for your own EOS area and grid storage:
-
-```yaml
-fs:
-  wlcg_base: davs://eoshome-k.cern.ch:8444/
-  storage_base: /eos/user/k/kandroso/DSProd
-crab:
-  out_lfn_base: /store/user/kandroso/DSProd_crab
-```
-
-## How it is used
-
-- **Storage** — a production writes to `<fs.storage_base>/<output>`, where `output` is named by the
-  [production setup](prod-setups.md). `fs.wlcg_base` is the protocol/host the products'
-  `/eos/...` paths are served through.
-- **CRAB** — the [CRAB backend](../concepts/backends.md) reads the `crab:` block. `storage_site` and
-  `out_lfn_base` are only a submit-time write-check (products still go to the storage area above);
-  `whitelist` is the CMS processing site. These can also be overridden per-run on the command line
-  (e.g. `--crab-whitelist`, `--crab-memory`).
+!!! note "On grid workers"
+    Being git-ignored does not mean being absent from jobs: the CRAB code tarball ships the whole
+    `config/` directory, so your `user_custom.yaml` travels with the job and grid workers resolve
+    `fs_default` exactly as your local runs do.
 
 !!! note "law.cfg"
     `config/law.cfg` holds only law/luigi framework settings (scheduler, job dir, modules). Storage

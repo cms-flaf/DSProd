@@ -1,7 +1,0 @@
-# User-specific overrides merged on top of config/global.yaml (see dsprod/config.py).
-# Edit these for your own EOS area and grid storage.
-fs:
-  wlcg_base: davs://eoshome-k.cern.ch:8444/
-  storage_base: /eos/user/k/kandroso/DSProd
-crab:
-  out_lfn_base: /store/user/kandroso/DSProd_crab

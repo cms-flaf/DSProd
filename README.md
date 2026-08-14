@@ -67,8 +67,8 @@ law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow cra
 ```
 
 Storage area and CRAB site/resource settings are **not** in the setup — they live in
-`config/global.yaml`, overridden per-user in `config/user_custom.yaml` (`fs.storage_base`,
-`fs.wlcg_base`, the `crab:` block). Gridpacks are not named either: `MakeGridpack` locates a
+`config/global.yaml`, overridden per-user in the git-ignored `config/user_custom.yaml`
+(`fs_default`, the `crab:` compute block). Gridpacks are not named either: `MakeGridpack` locates a
 point's gridpack in the `gridpacks` (Git LFS) store and generates it if absent.
 
 CRAB notes: DSProd owns all output/log I/O (products go to the storage area via the gfal-CLI

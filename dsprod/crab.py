@@ -7,15 +7,14 @@ AFS, so the DSProd code + genproductions_scripts are shipped as a CRAB ``inputFi
 (built at submit time) and unpacked by ``bootstrap.sh``; CMSSW is set up on the worker from
 cvmfs on demand (our releases are standard central releases).
 
-Site/resource settings live in the merged global config (``config/global.yaml`` +
-``user_custom.yaml``), NOT the production setup, so a setup is identical for htcondor and crab::
+There is **no CRAB-specific output location**: products always go to ``fs_default``, whatever the
+backend. Only the compute knobs are configurable, in the merged global config
+(``config/global.yaml`` + ``user_custom.yaml``), never in a production setup::
 
     crab:
-      storage_site: T3_CH_CERNBOX             # Site.storageSite (submit-time write-check only)
-      out_lfn_base: /store/user/<you>/DSProd  # Data.outLFNDirBase (write-check only)
-      whitelist: [ T2_CH_CERN ]               # optional; CMS processing sites
-      max_memory_mb: 2500                      # optional
-      max_cores: 1                             # optional
+      whitelist: [ T2_CH_CERN ]   # CMS processing site(s)
+      max_memory_mb: 2500
+      max_cores: 1
 """
 
 import math
@@ -29,6 +28,10 @@ import luigi
 from law.job.base import JobInputFile
 
 law.contrib.load("cms")
+
+#: site CRAB is told to stage out to. Never actually written to (stageout is disabled), but the
+#: submit-time check requires a site the user can write to; CERNBOX is the CERN-account default.
+_CRAB_DUMMY_SITE = "T3_CH_CERNBOX"
 
 
 def build_code_tarball(ana_path, out_path):
@@ -200,17 +203,13 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return build_code_tarball(self.ana_path(), out)
 
     def crab_stageout_location(self):
-        cfg = self._crab_cfg()
-        site = cfg.get("storage_site")
-        lfn = cfg.get("out_lfn_base")
-        if not site or not lfn:
-            raise RuntimeError(
-                "CRAB needs storage_site and out_lfn_base in config/law.cfg [crab] "
-                "(submit-time write-check only; DSProd products go to the `storage:` EOS path). "
-                "Example:\n  [crab]\n  storage_site: T3_CH_CERNBOX\n"
-                "  out_lfn_base: /store/user/$USER/DSProd"
-            )
-        return str(site), str(lfn)
+        """CRAB demands a `Site.storageSite` + `Data.outLFNDirBase` even when it transfers nothing.
+        DSProd disables CRAB stageout and writes every product to `fs_default` (the same location
+        as any other backend), so these are a submit-time formality and are filled in here rather
+        than configured — there is deliberately no separate CRAB output location.
+        """
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+        return _CRAB_DUMMY_SITE, f"/store/user/{user}/DSProd_crab_unused"
 
     def crab_output_directory(self):
         return law.LocalDirectoryTarget(self.local_path())

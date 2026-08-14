@@ -22,7 +22,7 @@ in the [global / user config](settings.md), so a shared model setup is not tied 
 process: X_HH_bbWW                        # registry key of the process (the plugin `name`)
 conditions: config/conditions_Run3.yaml   # per-era conditions file (in DSProd, framework-level)
 
-output: XHHbbWW                           # sub-directory under fs.storage_base (user config)
+output: XHHbbWW                           # sub-directory under fs_default (user config)
 
 eras: [ Run3_2022EE ]                     # eras to produce
 
@@ -50,7 +50,7 @@ points:
 |---|---|
 | `process` | Selects the [process](processes.md) (its registry `name`). |
 | `conditions` | The [per-era conditions file](conditions.md) (a DSProd path — framework-level, shared). |
-| `output` | Sub-directory under the user's storage area; products go to `<fs.storage_base>/<output>` (see [settings](settings.md)). |
+| `output` | Sub-directory under the user's storage area; products go to `<fs_default>/<output>` (see [settings](settings.md)). |
 | `eras` | Eras to produce (must exist in the conditions file). |
 | `nano_versions` | Per-era list of NanoAOD versions. A `default:` key supplies a fallback; a plain list applies to all eras. |
 | `first_step` / `last_step` | Bound the CMSSW chain `RunProd` runs. |

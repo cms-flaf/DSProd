@@ -1,18 +1,17 @@
-# DSProd global configuration: defaults for all runs. User-specific values (EOS area, CRAB
-# out_lfn_base, ...) are overridden in user_custom.yaml, merged on top of this file (scalars and
-# lists override; nested maps are deep-merged). See dsprod/config.py.
+# DSProd global configuration: defaults for all runs, committed to the repository.
+#
+# User-specific settings are NOT here — they go into config/user_custom.yaml, which is
+# git-ignored and merged on top of this file (scalars and lists override; nested maps are
+# deep-merged). See dsprod/config.py and docs/configuration/settings.md.
+#
+# Required in user_custom.yaml:
+#   fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
+# `fs_default` is the single file system all products are written to, whatever the workflow
+# backend (local / htcondor / crab). A plain /... path selects a local file system instead.
 
-# Remote storage.
-fs:
-  # law WLCG target base (protocol + host); storage/output paths are relative to it.
-  wlcg_base: davs://eoshome-USER.cern.ch:8444/
-  # root EOS directory for all DSProd products; a production writes to <storage_base>/<output>.
-  storage_base: /eos/user/U/USERNAME/DSProd
-
-# CRAB backend (submit-time write-check + processing-site choice only; products go to storage).
+# CRAB backend: compute settings only. CRAB never stages out (DSProd owns all I/O), so there is
+# no CRAB output location to configure.
 crab:
-  storage_site: T3_CH_CERNBOX
-  out_lfn_base: /store/user/USERNAME/DSProd_crab
-  whitelist: [ T2_CH_CERN ]
+  whitelist: [ T2_CH_CERN ] # CMS processing site(s) for the jobs
   max_memory_mb: 2500
   max_cores: 1

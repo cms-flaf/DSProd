@@ -28,7 +28,7 @@ points:
     events_total: 100
 ```
 
-Set your EOS area once in `config/user_custom.yaml` (`fs.storage_base`); the setup only names the
+Set your EOS area once in `config/user_custom.yaml` (`fs_default`); the setup only names the
 `output` sub-directory. See [Global & user config](../configuration/settings.md).
 
 ## Run it
@@ -53,7 +53,7 @@ What happens, in order:
 4. **`NanoMergeTask`** merges the per-seed nanos, verifies the event count, and drops the staged
    inputs.
 
-The merged output lands under your storage area (`<fs.storage_base>/XHHbbWW_test`), ready for FLAF.
+The merged output lands under your storage area (`<fs_default>/XHHbbWW_test`), ready for FLAF.
 
 !!! tip "Run just one stage"
     To stop earlier, run an upstream task directly, e.g. `law run MakeGridpack --setup … --workflow

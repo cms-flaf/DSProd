@@ -30,8 +30,8 @@ process's `gridpack_rel_path`) and then:
 
 The setup never names a gridpack — presence in DSProdGridpacks alone decides import vs. generate.
 
-Output: `<storage>/gridpacks/<gridpack-name>/gridpack.tar.xz` (keyed by the gridpack name, which is
-channel-independent, so points sharing a gridpack share it).
+Output: `<output>/gridpacks/<gridpack-name>/gridpack.tar.xz`, relative to `fs_default`. It is keyed
+by the gridpack name, which is channel-independent, so points sharing a gridpack share it.
 
 !!! note "Clean environment for generation"
     `gridpack_generation.sh` sets up its own CMSSW and aborts if one is already active. DSProd
@@ -46,7 +46,7 @@ via `cmsDriver` steps (`dsprod/run_step.py`). Branches are enumerated by
 `NanoMergeTask`. For each requested NanoAOD version it stages one file:
 
 ```
-<storage>/staging/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.root
+<output>/staging/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.root
 ```
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
@@ -59,7 +59,7 @@ verifies that the merged event count equals the sum of the inputs, and — only 
 staged per-seed inputs. Output is the final, FLAF-facing file:
 
 ```
-<storage>/nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root
+<output>/nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root
 ```
 
 ### `MakeManifest` (planned)

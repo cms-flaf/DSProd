@@ -61,11 +61,12 @@ per-step overrides.
 
 ## Storage layout
 
-Products are written to `<fs.storage_base>/<output>` (an EOS path from the [user config](../configuration/settings.md) and the setup's `output`) via LAW WLCG targets. The
+Products are written to `<fs_default>/<output>` — the file system from the
+[user config](../configuration/settings.md) plus the setup's `output` — via LAW WLCG targets. The
 final merged NanoAOD follows the private-nano (HLepRare) convention that FLAF consumes directly:
 
 ```
-<storage>/
+<fs_default>/<output>/
 ├── gridpacks/<point>/gridpack.tar.xz
 ├── staging/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.root   (removed after merge)
 └── nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root          (final, for FLAF)

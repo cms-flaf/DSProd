@@ -36,18 +36,34 @@ law.contrib.load("htcondor")
 #: path prefixes that must be served by a remote (WLCG/gfal) target
 _REMOTE_PREFIXES = ("davs://", "root://", "gsiftp://", "/eos/")
 
-#: lazily-built remote file system (needs a valid VOMS proxy at construction time).
-_wlcg_fs = None
+#: lazily-built default file system (a remote one needs a valid VOMS proxy at construction time).
+_fs_default = None
 
 
-def get_wlcg_fs():
-    """DSProd remote FS, backed by the gfal-CLI interface (works on CRAB workers, where the
-    gfal2 python module law.contrib.gfal needs is unavailable). Base from global config `fs.wlcg_base`.
+def get_fs():
+    """The default file system, from `fs_default` in the global/user config (FLAF notation): one
+    URI carrying protocol, host and base path, e.g.
+    `davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/`. A plain `/...` path gives a local
+    file system instead. Remote access goes through the gfal-CLI interface, which also works on
+    CRAB workers (where the gfal2 python module law.contrib.gfal needs is unavailable).
+
+    Every backend (local, htcondor, crab) writes to this one file system.
     """
-    global _wlcg_fs
-    if _wlcg_fs is None:
-        _wlcg_fs = WLCGFileSystem(get_global()["fs"]["wlcg_base"])
-    return _wlcg_fs
+    global _fs_default
+    if _fs_default is None:
+        base = get_global().get("fs_default")
+        if not base:
+            raise RuntimeError(
+                "No default file system defined. Please define `fs_default` in "
+                "config/user_custom.yaml, e.g.\n"
+                "  fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/"
+            )
+        _fs_default = (
+            law.LocalFileSystem(base=base)
+            if base.startswith("/")
+            else WLCGFileSystem(base)
+        )
+    return _fs_default
 
 
 def copy_param(ref_param, new_default):
@@ -190,25 +206,22 @@ class Task(law.Task):
     def local_target(self, *path):
         return law.LocalFileTarget(self.local_path(*path))
 
-    def target(self, path):
-        """A remote (WLCG) or local file target, chosen by the path prefix."""
-        if is_remote_path(path):
-            return WLCGFileTarget(path, fs=get_wlcg_fs())
-        return law.LocalFileTarget(path)
-
-    def storage_root(self):
-        """Root EOS dir for this production: <fs.storage_base> / <setup `output`> (the setup names
-        only the sub-directory; the user's storage area lives in global/user_custom config).
-        """
-        base = get_global()["fs"]["storage_base"]
-        name = self.prod_setup.get("output", self.setup_name)
-        return os.path.join(base, name)
+    def remote_target(self, *path, fs=None):
+        """A target on `fs` (default: `fs_default`). `path` is relative to the file system's base,
+        as in FLAF — the base lives in the fs, not in the path."""
+        fs = fs or get_fs()
+        path = os.path.join(*path)
+        if isinstance(fs, law.LocalFileSystem):
+            return law.LocalFileTarget(path, fs=fs)
+        return WLCGFileTarget(path, fs=fs)
 
     def storage_path(self, *parts):
-        return os.path.join(self.storage_root(), *parts)
+        """Path of a product relative to `fs_default`: <setup `output`>/<parts...>."""
+        name = self.prod_setup.get("output", self.setup_name)
+        return os.path.join(name, *parts)
 
     def storage_target(self, *parts):
-        return self.target(self.storage_path(*parts))
+        return self.remote_target(self.storage_path(*parts))
 
     def law_job_home(self):
         if "LAW_JOB_HOME" in os.environ:

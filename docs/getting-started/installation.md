@@ -36,6 +36,19 @@ production models; a run fails with a clear error if it is not checked out.
     ```
     Central gridpacks already on cvmfs are referenced directly and need no LFS pull.
 
+## Create your user configuration
+
+`config/user_custom.yaml` holds your personal settings and is **not** part of the repository (it is
+git-ignored). Create it after cloning, with at least the file system all products are written to:
+
+```yaml
+# config/user_custom.yaml
+fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
+```
+
+Point it at your own EOS area. See [Global & user config](../configuration/settings.md) for the
+full set of options and the committed defaults in `config/global.yaml`.
+
 ## Source the environment
 
 ```bash
