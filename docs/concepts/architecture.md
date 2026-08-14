@@ -40,10 +40,16 @@ The tasks never mention a physics process directly. Instead each process ships a
 - render the CMSSW **gen fragment** for a point/era.
 
 A [production setup](../configuration/prod-setups.md) selects one module by its `process:` key.
-Adding a new physics process is therefore a matter of
-[writing one module](../configuration/processes.md) plus its cards/fragment templates — the task
-graph is untouched. See the registry in `dsprod/registry.py` and the interface in
-`dsprod/processes/base.py`.
+The models live in a separate submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels)
+(mounted at `dsprod_models/`, imported as the `dsprod_models` package); DSProd's registry
+(`dsprod/registry.py`) imports it to discover all registered plugins, and the interface lives in
+`dsprod/processes/base.py`. Adding a new physics process is therefore a matter of
+[writing one module](../configuration/processes.md) — plugin plus its cards/fragment — in
+DSProdModels; the task graph is untouched.
+
+Generated (or private) gridpacks can be kept under version control in a second submodule,
+[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `dsprod_gridpacks/`,
+Git LFS), and referenced from a setup's `gridpack:` field.
 
 ## Per-era conditions
 

@@ -1,7 +1,6 @@
-"""Process customization modules.
+"""Process-customization framework.
 
-Importing this package imports every concrete process module so that its
-`@register_process` decorator runs. Add new processes here.
+This package holds the `ProcessCustomization` interface (`base.py`). The concrete models
+(plugins + cards + fragments) live in the separate `dsprod_models` submodule
+(repo cms-flaf/DSProdModels) and are discovered via `dsprod.registry`.
 """
-
-from . import x_hh_bbww  # noqa: F401,E402

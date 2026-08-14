@@ -4,8 +4,11 @@ Everything process-specific in DSProd lives in a **process customization module*
 generic; a module teaches DSProd how to turn a compact process configuration into concrete
 production points, how to obtain each point's gridpack, and how to render the CMSSW gen fragment.
 
-The interface is the `ProcessCustomization` abstract base class in `dsprod/processes/base.py`; the
-reference implementation is `dsprod/processes/x_hh_bbww.py` (X→HH→bbWW).
+The interface — the `ProcessCustomization` abstract base class — lives in DSProd itself
+(`dsprod/processes/base.py`). The **models** (plugins + cards + fragments) live in a separate
+submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `dsprod_models/`
+and imported as the Python package `dsprod_models`. The reference model is
+`dsprod_models/x_hh_bbww/` (X→HH→bbWW).
 
 ## The interface
 
@@ -32,8 +35,8 @@ class MyProcess(ProcessCustomization):
 ```
 
 The `@register_process` decorator registers the class under its `name`. Because
-`dsprod/processes/__init__.py` imports every process module, `get_process(name)` then resolves it
-from any [production setup](prod-setups.md).
+`dsprod_models/__init__.py` imports every model subpackage, `get_process(name)` (which imports
+`dsprod_models`) then resolves it from any [production setup](prod-setups.md).
 
 ### `GridpackSpec`
 
@@ -53,24 +56,36 @@ For generate mode, override `render_gridpack_cards(point, out_dir)` to write the
 `point_name`, `gridpack_name`, `xsec`, `filter_efficiency`, and `validate` have sensible defaults
 and can be overridden when a process needs them.
 
-## Templates
+A plugin lives in the `dsprod_models` submodule and imports DSProd's framework classes, so it is
+usable only inside a DSProd checkout (not as a standalone library). It resolves its cards and
+fragment relative to its own location (`os.path.dirname(__file__)`), so a model is self-contained.
 
-Card and fragment templates live under `config/process_templates/<process>/`. For `X_HH_bbWW`:
+## Model layout
+
+Each model is a subpackage of `dsprod_models` bundling its plugin, gen fragment, and cards. For
+`x_hh_bbww`:
 
 ```
-config/process_templates/X_HH_bbWW/
-├── cards/            # genproductions input cards (proc_card, run_card, customizecards, extramodels)
-└── fragment.py       # CMSSW gen fragment template
+dsprod_models/                 (the DSProdModels submodule, mounted at dsprod_models/)
+├── __init__.py                # imports every model subpackage (registration entry point)
+└── x_hh_bbww/
+    ├── __init__.py            # imports plugin.py
+    ├── plugin.py              # the ProcessCustomization subclass, @register_process
+    ├── fragment.py            # CMSSW gen fragment template
+    └── cards/                 # genproductions cards (proc_card, run_card, customizecards, extramodels)
 ```
 
-The module fills in the per-point values (mass, decay channel, event count) when it renders these
+The plugin fills in the per-point values (mass, decay channel, event count) when it renders these
 for a given point/era.
 
 ## Adding a process
 
-1. Add card/fragment templates under `config/process_templates/<process>/`.
-2. Add a `ProcessCustomization` subclass in `dsprod/processes/<process>.py` and import it from
-   `dsprod/processes/__init__.py`.
-3. Write a [production setup](prod-setups.md) with `process: <name>` and its `points:`.
+In the [DSProdModels](https://github.com/cms-flaf/DSProdModels) repository:
 
-No task code changes — the graph is generic.
+1. Add a subpackage `dsprod_models/<model>/` with `plugin.py` (a `ProcessCustomization` subclass
+   decorated with `@register_process`), a `fragment.py`, and a `cards/` directory.
+2. Import it from `dsprod_models/__init__.py`.
+
+Then in DSProd, write a [production setup](prod-setups.md) with `process: <name>` and its
+`points:`, and advance the `dsprod_models` submodule pointer. No task code changes — the graph is
+generic.

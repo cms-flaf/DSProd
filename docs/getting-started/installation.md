@@ -5,8 +5,13 @@ the repository and a valid grid proxy; the CMSSW releases it uses are installed 
 
 ## Clone the repository
 
-DSProd uses one submodule, `genproductions_scripts` (the CMS gridpack generators), so clone
-recursively:
+DSProd uses three submodules, so clone recursively:
+
+| Submodule | Path | Contents |
+|---|---|---|
+| `genproductions_scripts` | `genproductions_scripts/` | CMS gridpack generators (GitLab cms-gen) |
+| [DSProdModels](https://github.com/cms-flaf/DSProdModels) | `dsprod_models/` | model plugins + production cards + gen fragments |
+| [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) | `dsprod_gridpacks/` | stored gridpacks (Git LFS) |
 
 ```bash
 git clone --recursive ssh://git@github.com:cms-flaf/DSProd.git
@@ -18,6 +23,18 @@ If you already cloned without `--recursive`:
 ```bash
 git submodule update --init --recursive
 ```
+
+`dsprod_models` is **required** — it is the Python package (`dsprod_models`) that provides the
+production models; a run fails with a clear error if it is not checked out.
+
+!!! note "Gridpacks submodule and Git LFS"
+    `dsprod_gridpacks` is tracked with [Git LFS](https://git-lfs.com/). Its LFS content is **not**
+    fetched by the recursive clone; pull it only when a gridpack stored there is actually needed:
+    ```bash
+    git lfs install                 # once per machine
+    git -C dsprod_gridpacks lfs pull
+    ```
+    Central gridpacks already on cvmfs are referenced directly and need no LFS pull.
 
 ## Source the environment
 

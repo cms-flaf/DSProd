@@ -1,15 +1,26 @@
 """Registry of process customization modules.
 
 Concrete `ProcessCustomization` subclasses register themselves with `@register_process`.
-`dsprod.processes` imports every process module on import, so `get_process(name)` resolves
-any registered process. A `prod_setup` YAML selects one by its `process:` key.
+The models live in the `dsprod_models` submodule (repo cms-flaf/DSProdModels); importing it
+imports every model subpackage, so `get_process(name)` resolves any registered process. A
+`prod_setup` YAML selects one by its `process:` key.
 """
 
-# Note: do NOT import from .processes here — dsprod.processes eagerly imports the concrete
-# process modules, which import register_process back from this module (circular). Registration
-# is triggered lazily in get_process/all_processes via `import dsprod.processes`.
+# Note: do NOT import dsprod_models at module import time — its plugins import register_process
+# back from this module (circular). Registration is triggered lazily by `_import_models()`.
 
 _registry = {}
+
+
+def _import_models():
+    """Import the `dsprod_models` package to trigger process registration."""
+    try:
+        import dsprod_models  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "could not import the `dsprod_models` package — is the DSProdModels submodule "
+            "checked out? Run `git submodule update --init dsprod_models`."
+        ) from exc
 
 
 def register_process(cls):
@@ -24,7 +35,7 @@ def register_process(cls):
 
 
 def get_process(name: str) -> "ProcessCustomization":
-    import dsprod.processes  # noqa: F401  (ensure all process modules are imported)
+    _import_models()
 
     if name not in _registry:
         known = ", ".join(sorted(_registry)) or "<none>"
@@ -33,6 +44,6 @@ def get_process(name: str) -> "ProcessCustomization":
 
 
 def all_processes() -> "dict[str, ProcessCustomization]":
-    import dsprod.processes  # noqa: F401
+    _import_models()
 
     return dict(_registry)

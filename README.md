@@ -20,12 +20,14 @@ InstallCMSSW), runnable **local / HTCondor / CRAB**. CRAB has been validated end
 ```
 env.sh / bootstrap.sh / config/law.cfg   environment + law setup (CMSSW installed on demand)
 genproductions_scripts/                  submodule (GitLab cms-gen) — gridpack generators
+dsprod_models/                           submodule (cms-flaf/DSProdModels) — model plugins + cards + fragments
+dsprod_gridpacks/                        submodule (cms-flaf/DSProdGridpacks, Git LFS) — stored gridpacks
 dsprod/
   tasks.py         Task base + HTCondorWorkflow + InstallCMSSW/MakeGridpack/RunProd/NanoMergeTask
   crab.py          CRAB backend (law.contrib.cms.CrabWorkflow); ships code via inputFiles
   run_step.py      cmsDriver step builder (GEN→…→NANO), per-step CMSSW
-  registry.py      process-module registry
-  processes/       ProcessCustomization ABC + per-process modules (e.g. x_hh_bbww.py)
+  registry.py      process registry (imports dsprod_models to discover plugins)
+  processes/base.py  ProcessCustomization ABC (models themselves live in dsprod_models)
   tools.py         utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos, retries)
   grid_tools.py / law_gfal.py / law_wlcg.py
                    FLAF's gfal-CLI remote-file interface (works on WLCG workers, where the

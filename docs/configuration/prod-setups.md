@@ -54,7 +54,11 @@ The `points` list is interpreted by the process module's `enumerate_points`, so 
 keys are process-specific. For `X_HH_bbWW` each point has a `name`, `mass`, `spin`, and
 `events_total`, plus an **optional** `gridpack`:
 
-- **with `gridpack:`** — import that existing tarball (central gridpacks live on cvmfs);
+- **with `gridpack:`** — import that existing tarball. This can be a central gridpack on cvmfs, a
+  `davs://`/`/eos` path, or a gridpack stored in the
+  [`dsprod_gridpacks`](https://github.com/cms-flaf/DSProdGridpacks) submodule (e.g.
+  `dsprod_gridpacks/x_hh_bbww/<point>/gridpack.tar.xz`; remember to `git -C dsprod_gridpacks lfs
+  pull` it first);
 - **without `gridpack:`** — generate the gridpack from the process
   [cards template](processes.md).
 

@@ -32,6 +32,7 @@ def build_code_tarball(ana_path, out_path):
     """Tar the DSProd code needed on a WLCG worker (no AFS there)."""
     includes = [
         "dsprod",
+        "dsprod_models",  # model plugins + cards + fragments (DSProdModels submodule)
         "config",
         "env.sh",
         "bootstrap.sh",
