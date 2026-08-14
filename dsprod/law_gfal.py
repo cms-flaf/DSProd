@@ -1,0 +1,310 @@
+"""law RemoteFileInterface backed by the gfal-* CLI, vendored from FLAF/RunKit/law_gfal.py.
+
+Unlike ``law.contrib.gfal`` (which needs the gfal2 python module), this shells out to the
+gfal-* command-line tools, so it works on CRAB/WLCG workers where the gfal2 python bindings
+are not installed for the job's python. Only the in-process ``PathCache`` is kept; FLAF's
+optional cache-server (``RemotePathCache``/``pathCacheClient``) is not vendored.
+"""
+
+import os
+import sys
+import time
+
+from law.target.remote.interface import RemoteFileInterface
+
+from .grid_tools import (
+    get_voms_proxy_info,
+    GfalError,
+    gfal_copy_safe,
+    gfal_ls_safe,
+    gfal_rm,
+    gfal_stat,
+    gfal_exists,
+)
+from .tools import repeat_until_success
+
+
+class PathCacheEntry:
+    def __init__(self, path, exists, expiration_time):
+        self.path = path
+        self.exists = exists
+        self.expiration_time = expiration_time
+
+    def is_valid(self):
+        return self.expiration_time >= time.time()
+
+
+class PathCache:
+    def __init__(self, validity_period):
+        self.validity_period = validity_period
+        self.cache = {}
+
+    @staticmethod
+    def _iter_parents(path):
+        while True:
+            parent = os.path.dirname(path)
+            if not parent or parent == path:
+                break
+            path = parent
+            yield path
+
+    def set(self, path, exists):
+        self.cache[path] = PathCacheEntry(
+            path, exists, time.time() + self.validity_period
+        )
+        # If a path exists, every ancestor directory exists too: drop any stale negative
+        # ancestor entry that would otherwise (via directory-negative inference in get())
+        # wrongly imply this path is absent.
+        if exists:
+            for parent in self._iter_parents(path):
+                pentry = self.cache.get(parent)
+                if pentry is not None and pentry.exists is False:
+                    del self.cache[parent]
+
+    def set_local(self, path, exists):
+        self.set(path, exists)
+
+    def set_exists(self, base_dir, items):
+        for item in items:
+            path = os.path.join(base_dir, item)
+            self.set(path, True)
+        # Mark the directory itself as existing so lookups of absent siblings can be
+        # answered from this cached listing without an extra round-trip.
+        self.set(base_dir, True)
+
+    def get(self, path):
+        entry = self.cache.get(path)
+        if entry is not None:
+            if entry.is_valid():
+                return entry.exists, True
+            del self.cache[path]
+        # Directory-negative inference: if the nearest cached ancestor directory does not
+        # exist, then this path cannot exist either.
+        for parent in self._iter_parents(path):
+            pentry = self.cache.get(parent)
+            if pentry is None:
+                continue
+            if not pentry.is_valid():
+                del self.cache[parent]
+                continue
+            if pentry.exists is False:
+                return False, True
+            break
+        return None, True
+
+    def get_many(self, paths):
+        return {path: self.get(path)[0] for path in paths}
+
+    def invalidate(self, path):
+        to_remove = []
+        for p in self.cache:
+            if path.startswith(p):
+                to_remove.append(p)
+        for p in to_remove:
+            del self.cache[p]
+
+
+class GFALFileInterface(RemoteFileInterface):
+    local_prefix = "file://"
+
+    def __init__(self, base, local_path_cache_validity_period=60, verbose=0):
+        self.voms_token = get_voms_proxy_info()["path"]
+        self.path_cache = PathCache(local_path_cache_validity_period)
+        self.verbose = verbose
+        super(GFALFileInterface, self).__init__(base=base)
+
+    def is_local(self, path):
+        return path.startswith(GFALFileInterface.local_prefix)
+
+    exists_counter = 0
+    remove_counter = 0
+    filecopy_counter = 0
+    listdir_counter = 0
+
+    def exists(self, path, base=None, **kwargs):
+        GFALFileInterface.exists_counter += 1
+        path_dir, path_name = os.path.split(path)
+        path_uri = self.uri(path, base=base)
+        dir_uri = self.uri(path_dir, base=base)
+        result = False
+        cached_result, from_local_cache = self.path_cache.get(path_uri)
+        if cached_result is None:
+            cached_dir_result, from_local_cache = self.path_cache.get(dir_uri)
+            if cached_dir_result is not None:
+                cached_result = False
+                self.path_cache.set_local(path_uri, False)
+        use_cache = cached_result is not None
+
+        if use_cache:
+            result = cached_result
+        else:
+            path_dir, path_name = os.path.split(path)
+            dir_entries = self.listdir(path_dir, base=base, silent=True)
+            result = path_name in dir_entries
+            if not result:
+                self.path_cache.set(path_uri, False)
+
+        if self.verbose > 0:
+            print(
+                f"GFALFileInterface.exists: cnt={GFALFileInterface.exists_counter} path={path} taken_from_cache={use_cache} from_local_cache={from_local_cache} result={result}",
+                file=sys.stderr,
+            )
+
+        return result
+
+    def remove(self, path, base=None, silent=True, **kwargs):
+        GFALFileInterface.remove_counter += 1
+        path_uri = self.uri(path, base=base)
+        if self.verbose > 0:
+            print(
+                f"GFALFileInterface.remove: cnt={GFALFileInterface.remove_counter} path={path}",
+                file=sys.stderr,
+            )
+        try:
+            if gfal_exists(path_uri, voms_token=self.voms_token):
+                gfal_rm(path_uri, voms_token=self.voms_token, recursive=True)
+            self.path_cache.set(path_uri, False)
+            return True
+        except GfalError as e:
+            if not silent:
+                raise e
+        return False
+
+    def filecopy(self, src, dst, base=None, **kwargs):
+        GFALFileInterface.filecopy_counter += 1
+        if self.verbose > 0:
+            print(
+                f"GFALFileInterface.filecopy: cnt={GFALFileInterface.filecopy_counter} src={src} dst={dst}",
+                file=sys.stderr,
+            )
+        src_local = self.is_local(src)
+        dst_local = self.is_local(dst)
+        if src_local and not dst_local:
+            dst_uris = self.uri(dst, base=base, return_all=True)
+            src_uri = src
+            for dst_uri in dst_uris:
+                dst_dir_uri, _ = os.path.split(dst_uri)
+                self.path_cache.set(dst_uri, False)
+                gfal_copy_safe(src_uri, dst_uri, voms_token=self.voms_token, verbose=0)
+                self.path_cache.set(dst_uri, True)
+                cached_dst_dir, _ = self.path_cache.get(dst_dir_uri)
+                if cached_dst_dir is not None and not cached_dst_dir:
+                    self.path_cache.set(dst_dir_uri, True)
+            return src_uri, dst_uris
+        elif dst_local and not src_local:
+            dst_uri = dst
+            src_uris = self.uri(src, base=base, return_all=True)
+            opt_list = [
+                [
+                    uri,
+                ]
+                for uri in src_uris
+            ]
+            successful_src_uri = None
+
+            def copy(src_uri):
+                nonlocal successful_src_uri
+                gfal_copy_safe(
+                    src_uri, dst_uri, voms_token=self.voms_token, n_retries=1, verbose=0
+                )
+                successful_src_uri = src_uri
+
+            repeat_until_success(
+                copy,
+                opt_list=opt_list,
+                exception=GfalError(
+                    f"GFALFileInterface: failed to copy {src} to {dst}"
+                ),
+            )
+            return successful_src_uri, dst_uri
+        raise RuntimeError(
+            f"GFALFileInterface: unable to copy {src} -> {dst}. Either source or destination must be local"
+        )
+
+    def listdir(self, path, base=None, silent=False, **kwargs):
+        GFALFileInterface.listdir_counter += 1
+        if self.verbose > 0:
+            print(
+                f"GFALFileInterface.listdir: cnt={GFALFileInterface.listdir_counter} path={path}",
+                file=sys.stderr,
+            )
+        path_uri = self.uri(path, base=base)
+        entries = gfal_ls_safe(
+            path_uri, voms_token=self.voms_token, catch_stderr=True, verbose=0
+        )
+        if entries is None:
+            if not silent:
+                gfal_ls_safe(
+                    path_uri, voms_token=self.voms_token, catch_stderr=False, verbose=1
+                )
+                raise GfalError(f"GFALFileInterface: failed to list directory {path}")
+            entry_names = []
+            self.path_cache.set(path_uri, False)
+            self._mark_absent_ancestors(path_uri)
+        else:
+            entry_names = [entry.name for entry in entries]
+            self.path_cache.set_exists(path_uri, entry_names)
+        return entry_names
+
+    def _mark_absent_ancestors(self, dir_uri, max_climb=32):
+        # A directory was found absent. Walk upward to record the highest absent ancestor,
+        # so subsequent lookups of the missing subtree are answered from the cache. A negative
+        # cached high up suppresses a large subtree, so each absent ancestor is confirmed with
+        # a second gfal-ls before caching (a single failure may be transient).
+        current = dir_uri
+        for _ in range(max_climb):
+            parent = os.path.dirname(current)
+            if not parent or parent == current:
+                break
+            cached, _ = self.path_cache.get(parent)
+            if cached is not None:
+                break
+            entries = gfal_ls_safe(
+                parent, voms_token=self.voms_token, catch_stderr=True, verbose=0
+            )
+            if entries is None:
+                entries = gfal_ls_safe(
+                    parent, voms_token=self.voms_token, catch_stderr=True, verbose=0
+                )
+            if entries is None:
+                self.path_cache.set(parent, False)
+                current = parent
+            else:
+                self.path_cache.set_exists(parent, [entry.name for entry in entries])
+                break
+
+    def prefetch(self, paths, base=None):
+        uri_map = {path: self.uri(path, base=base) for path in paths}
+        uri_results = self.path_cache.get_many(list(uri_map.values()))
+        return {path: uri_results.get(uri) for path, uri in uri_map.items()}
+
+    @staticmethod
+    def _raise_not_implemented(method_name):
+        raise NotImplementedError(
+            f"{method_name} is not supported by the GFAL interface"
+        )
+
+    def chmod(self, file, perm, **kwargs):
+        return True
+
+    def isdir(self, path, **kwargs):
+        stat = gfal_stat(path, voms_token=self.voms_token)
+        return stat["type"] == "directory"
+
+    def isfile(self):
+        self._raise_not_implemented("isfile")
+
+    def mkdir(self, *args, **kwargs):
+        return True
+
+    def mkdir_rec(self, *args, **kwargs):
+        return True
+
+    def rmdir(self):
+        self._raise_not_implemented("rmdir")
+
+    def stat(self):
+        self._raise_not_implemented("stat")
+
+    def unlink(self):
+        self._raise_not_implemented("unlink")

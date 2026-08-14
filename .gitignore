@@ -1,0 +1,14 @@
+# on-demand CMSSW installs and law/job state
+/soft/
+/data/
+/.law/
+
+# python
+__pycache__/
+*.pyc
+
+# gfal-copy scratch
+*.gfal_copy_safe_tmp
+
+# user-specific config (see docs/configuration/settings.md)
+/config/user_custom.yaml
