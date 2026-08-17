@@ -46,7 +46,11 @@ A point never names its gridpack. `MakeGridpack` computes the gridpack's canonic
 provides two things:
 
 - **where the gridpack lives** — override `gridpack_rel_path(point, era)` to return the path
-  (relative to the `gridpacks` store) mirroring the model's own directory convention;
+  (relative to the `gridpacks` store) mirroring the model's own directory convention. Its first
+  level names the **hard process the gridpack contains**, which can be broader than the model: if
+  the decays are applied by the gen fragment, one gridpack serves every final state, so
+  `X_HH_bbWW` stores under `X_HH/` (`gridpack_process` in its plugin) and shares the tarball with
+  any other X→HH model;
 - **how to generate it** — `gridpack()` returns a
   `GridpackSpec(generator="MadGraph5_aMCatNLO", cards_template=...)`, and
   `render_gridpack_cards(point, out_dir)` writes the `genproductions` input cards (`proc_card` /
