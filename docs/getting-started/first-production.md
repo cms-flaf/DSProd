@@ -46,8 +46,8 @@ law run NanoMergeTask \
 What happens, in order:
 
 1. **`InstallCMSSW`** builds the CMSSW releases the era needs (first run only; cached afterwards).
-2. **`MakeGridpack`** finds no stored M-666 gridpack in DSProdGridpacks, so it generates one from
-   the process [cards](../configuration/processes.md).
+2. **`ImportGridpack`** finds no M-666 gridpack in DSProdGridpacks, so **`MakeGridpack`**
+   generates one from the process [cards](../configuration/processes.md).
 3. **`RunProd`** runs the fused GEN→…→MiniAOD→NanoAOD chain and stages one nano per requested
    version.
 4. **`NanoMergeTask`** merges the per-seed nanos, verifies the event count, and drops the staged

@@ -5,36 +5,48 @@ the repository and a valid grid proxy; the CMSSW releases it uses are installed 
 
 ## Clone the repository
 
-DSProd uses three submodules, so clone recursively:
+DSProd uses three submodules:
 
 | Submodule | Path | Contents |
 |---|---|---|
 | `genproductions_scripts` | `genproductions_scripts/` | CMS gridpack generators (GitLab cms-gen) |
 | [DSProdModels](https://github.com/cms-flaf/DSProdModels) | `models/` | model plugins + production cards + gen fragments |
-| [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) | `gridpacks/` | stored gridpacks (Git LFS) |
+| [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) | `gridpacks/` | stored gridpacks (private, Git LFS) |
 
 ```bash
-git clone --recursive ssh://git@github.com:cms-flaf/DSProd.git
+git clone git@github.com:cms-flaf/DSProd.git
 cd DSProd
+git submodule update --init models genproductions_scripts
+./setup_gridpacks.sh    # optional: the gridpack store (see below)
 ```
 
-If you already cloned without `--recursive`:
+`models` is **required** — it provides the production models; a run fails with a clear error if it
+is not checked out.
 
-```bash
-git submodule update --init --recursive
-```
+!!! warning "Do not use `git clone --recursive`"
+    `gridpacks` is **private** (so it is not exposed publicly and outside clones cannot spend the
+    organisation's Git-LFS quota), and a recursive clone would try to check it out — and download
+    every gridpack. Init the submodules as above instead.
 
-`models` is **required** — it is the Python package (`models`) that provides the
-production models; a run fails with a clear error if it is not checked out.
+### The gridpack store
 
-!!! note "Gridpacks submodule and Git LFS"
-    `gridpacks` is tracked with [Git LFS](https://git-lfs.com/). Its LFS content is **not**
-    fetched by the recursive clone; pull it only when a gridpack stored there is actually needed:
-    ```bash
-    git lfs install                 # once per machine
-    git -C gridpacks lfs pull
-    ```
-    Central gridpacks already on cvmfs are referenced directly and need no LFS pull.
+`./setup_gridpacks.sh` sets up `gridpacks/` the way it is meant to be used day to day:
+
+- a **sparse checkout** holding only the per-gridpack `README.md` provenance files — a few hundred
+  kilobytes instead of the whole gridpack collection;
+- **every Git-LFS download disabled** (`lfs.fetchexclude=*`), so no tarball is ever fetched by
+  accident.
+
+A gridpack is then fetched **on demand**: `ImportGridpack` streams the one it needs straight from
+the LFS server to `fs_default` (see [Tasks](../concepts/tasks.md)). Nothing is written into the
+working tree, so the sparse checkout stays intact.
+
+The store is entirely **optional**: without it (or without access to it) DSProd generates every
+gridpack itself. The script says so and exits cleanly if the checkout is not permitted.
+
+!!! tip "Adding gridpacks you produced"
+    `CollectGridpacks` copies gridpacks this checkout produced back into the store and prints the
+    `git add --sparse …` commands to commit them — see [Tasks](../concepts/tasks.md).
 
 ## Create your user configuration
 

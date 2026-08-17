@@ -21,12 +21,14 @@ InstallCMSSW), runnable **local / HTCondor / CRAB**. CRAB has been validated end
 env.sh / bootstrap.sh / config/law.cfg   environment + law setup (CMSSW installed on demand)
 genproductions_scripts/                  submodule (GitLab cms-gen) — gridpack generators
 models/                           submodule (cms-flaf/DSProdModels) — model plugins + cards + fragments
-gridpacks/                        submodule (cms-flaf/DSProdGridpacks, Git LFS) — stored gridpacks
+gridpacks/                        submodule (cms-flaf/DSProdGridpacks, private, Git LFS) — gridpack
+                                  store; sparse checkout (README.md only), set up by setup_gridpacks.sh
 dsprod/
-  tasks.py         Task base + HTCondorWorkflow + InstallCMSSW/MakeGridpack/RunProd/NanoMergeTask
+  tasks.py         Task base + HTCondorWorkflow + InstallCMSSW/Import|MakeGridpack/RunProd/NanoMergeTask
   crab.py          CRAB backend (law.contrib.cms.CrabWorkflow); ships code via inputFiles
   run_step.py      cmsDriver step builder (GEN→…→NANO), per-step CMSSW
   registry.py      process registry (imports models to discover plugins)
+  gridpack_store.py  sparse/LFS access to the gridpacks store (on-demand materialization)
   processes/base.py  ProcessCustomization ABC (models themselves live in models)
   tools.py         utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos, retries)
   grid_tools.py / law_gfal.py / law_wlcg.py
@@ -37,9 +39,9 @@ dsprod/
 ## Production chain (design)
 
 ```
-MakeGridpack ─► RunProd(era,point,seed) ─► NanoMergeTask ─► MakeManifest ─► FLAF
-(generate or   │ fused GEN→DRPremix→MiniAOD→{NANOv12,NANOv15}, stage per-seed
-import existing)└─ NanoMergeTask haddnano's a group and drops the staged inputs
+ImportGridpack / MakeGridpack ─► RunProd(era,point,seed) ─► NanoMergeTask ─► MakeManifest ─► FLAF
+(from the store / generated)   │ fused GEN→DRPremix→MiniAOD→{NANOv12,NANOv15}, stage per-seed
+                               └─ NanoMergeTask haddnano's a group and drops the staged inputs
 ```
 
 ## Quick start
@@ -68,8 +70,9 @@ law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow cra
 
 Storage area and CRAB site/resource settings are **not** in the setup — they live in
 `config/global.yaml`, overridden per-user in the git-ignored `config/user_custom.yaml`
-(`fs_default`, the `crab:` compute block). Gridpacks are not named either: `MakeGridpack` locates a
-point's gridpack in the `gridpacks` (Git LFS) store and generates it if absent.
+(`fs_default`, the `crab:` compute block). Gridpacks are not named either: their location in the
+`gridpacks` (Git LFS) store is derived, `ImportGridpack` copies a stored one to `fs_default`, and
+`MakeGridpack` generates the rest. `CollectGridpacks` copies produced gridpacks back for committing.
 
 CRAB notes: DSProd owns all output/log I/O (products go to the storage area via the gfal-CLI
 interface), so CRAB's own stageout/logs are forced off. WLCG workers have no AFS, so the code is

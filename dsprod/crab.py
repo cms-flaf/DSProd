@@ -56,7 +56,11 @@ _CRAB_DEFAULT_REFILL_FRACTION = 0.2
 
 
 def build_code_tarball(ana_path, out_path):
-    """Tar the DSProd code needed on a WLCG worker (no AFS there)."""
+    """Tar the DSProd code needed on a WLCG worker (no AFS there).
+
+    Deliberately **without** `gridpacks`: a CRAB input sandbox is size-limited, and a job that
+    needs a gridpack downloads it from `fs_default` (where `MakeGridpack` put it) at run time.
+    """
     includes = [
         "dsprod",
         "models",  # model plugins + cards + fragments (DSProdModels submodule)

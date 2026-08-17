@@ -10,17 +10,19 @@ added in later phases and reuse these bases.
 
 import contextlib
 import copy
+import datetime
 import glob
 import math
 import os
 import shutil
+import subprocess
 import tempfile
 
 import law
 import luigi
 import yaml
 
-from . import registry, run_step
+from . import gridpack_store, registry, run_step
 from .config import get_global
 from .crab import CrabWorkflow
 from .law_wlcg import WLCGFileSystem, WLCGFileTarget
@@ -76,34 +78,17 @@ def is_remote_path(path):
     return path.startswith(_REMOTE_PREFIXES)
 
 
-def _is_lfs_pointer(path):
+def _git_head(path):
+    """Commit a checkout is on, for provenance records ("unknown" outside a git checkout)."""
     try:
-        with open(path, "rb") as f:
-            return f.read(42).startswith(b"version https://git-lfs")
-    except OSError:
-        return False
-
-
-def gridpack_store_path(repo_root, rel):
-    """Local path of a gridpack stored in the DSProdGridpacks checkout at `repo_root` (relative
-    path `rel`), materializing its Git-LFS content on demand. Returns None if the submodule is not
-    checked out (e.g. a bare grid worker) or the gridpack is simply not there — the caller then
-    generates it."""
-    if not os.path.isdir(repo_root):
-        return None
-    path = os.path.join(repo_root, rel)
-    if not os.path.exists(path):
-        return None
-    if _is_lfs_pointer(path):
-        try:
-            ps_call(
-                [f"git -C {repo_root} lfs pull --include={rel}"], shell=True, verbose=1
-            )
-        except Exception:
-            return None
-    if not os.path.exists(path) or _is_lfs_pointer(path):
-        return None
-    return path
+        out = subprocess.run(
+            ["git", "-C", path or ".", "rev-parse", "HEAD"],
+            capture_output=True,
+            check=True,
+        )
+        return out.stdout.decode().strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "unknown"
 
 
 def runprod_branches(eras, points):
@@ -337,35 +322,74 @@ class InstallCMSSW(Task, law.LocalWorkflow):
         out.touch()
 
 
-class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
-    """Provide each *distinct* gridpack: import it from the store, or generate it.
+class GridpackTask(Task):
+    """Shared branch map and output location of the gridpack-providing tasks.
 
-    Branches over gridpacks, not points: several points can share one gridpack (e.g. the decay
-    channels of X->HH->bbWW, where the Higgses leave the generator undecayed), and one branch per
-    point would make them race on the same output.
+    Branches over *distinct* gridpacks, not points: several points can share one gridpack (e.g.
+    the decay channels of X->HH->bbWW, where the Higgses leave the generator undecayed), and one
+    branch per point would make them race on the same output.
     """
-
-    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
 
     def create_branch_map(self):
         return dict(enumerate(self.gridpack_points()))
+
+    def gridpack_rel(self):
+        """Path of this branch's gridpack inside the DSProdGridpacks store."""
+        return self.process.gridpack_rel_path(self.branch_data)
 
     def output(self):
         name = self.process.gridpack_name(self.branch_data)
         return self.storage_target("gridpacks", name, "gridpack.tar.xz")
 
+
+class ImportGridpack(GridpackTask, law.LocalWorkflow):
+    """Copy a gridpack that the DSProdGridpacks store already has to `fs_default`.
+
+    Always local: it needs the git checkout and the Git-LFS server, neither of which a grid worker
+    has. It is complete — nothing to do — when the gridpack is already on `fs_default` or when the
+    store does not have it, in which case `MakeGridpack` generates it instead.
+    """
+
+    def store_root(self):
+        return gridpack_store.store_root(self.ana_path())
+
+    def complete(self):
+        if self.is_workflow():
+            return super(ImportGridpack, self).complete()
+        return self.output().exists() or not gridpack_store.contains(
+            self.store_root(), self.gridpack_rel()
+        )
+
     def run(self):
-        point = self.branch_data
-        # The gridpack's canonical location is derived (never configured in the setup): a path in
-        # the DSProdGridpacks store. Import it from there if present, otherwise generate it.
-        repo_root = os.path.join(self.ana_path(), "gridpacks")
-        rel = self.process.gridpack_rel_path(point)
-        stored = gridpack_store_path(repo_root, rel)
-        if stored is not None:
-            with self.output().localize("w") as out_local:
-                shutil.copy(stored, out_local.abspath)
-        else:
-            self._generate(self.process.gridpack(point))
+        rel = self.gridpack_rel()
+        with self.output().localize("w") as out_local:
+            if not gridpack_store.fetch(self.store_root(), rel, out_local.abspath):
+                raise RuntimeError(
+                    f"could not materialize {rel} from the gridpack store"
+                )
+
+
+class MakeGridpack(GridpackTask, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
+    """Generate each *distinct* gridpack that neither `fs_default` nor the store already has.
+
+    Importing from the store is `ImportGridpack`'s job and has run by the time this task decides
+    what to submit, so a branch reaching `run()` really has to be generated.
+    """
+
+    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 12.0)
+
+    def workflow_requires(self):
+        reqs = super(MakeGridpack, self).workflow_requires()
+        reqs["store"] = ImportGridpack.req(self, workflow="local")
+        return reqs
+
+    def requires(self):
+        return {
+            "store": ImportGridpack.req(self, branch=self.branch, workflow="local"),
+        }
+
+    def run(self):
+        self._generate(self.process.gridpack(self.branch_data))
 
     def _generate(self, spec):
         """Render the process cards and run genproductions_scripts gridpack_generation.sh."""
@@ -420,6 +444,124 @@ class MakeGridpack(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         finally:
             if is_tmp:
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+
+class CollectGridpacks(Task):
+    """Collect the gridpacks this setup produced into the local DSProdGridpacks checkout.
+
+    For each distinct gridpack of the setup:
+
+    * already tracked by the store — nothing to do;
+    * otherwise present on `fs_default` (so it was generated here) — download it into the store
+      checkout together with a `README.md` recording how it was produced;
+    * neither — reported as not produced yet.
+
+    Nothing is committed: adding ~30 MB of Git-LFS content per gridpack stays a deliberate act, so
+    the task ends by printing the `git add --sparse` / `commit` / `push` commands to run.
+    """
+
+    def output(self):
+        return self.local_target("collected.json")
+
+    def complete(self):
+        # a collection step, not a product: re-run it whenever it is asked for
+        return False
+
+    def _readme(self, point, path, rel):
+        """Provenance for a gridpack generated here (the store requires one per gridpack)."""
+        name = self.process.gridpack_name(point)
+        params = ", ".join(f"`{k}` = {v}" for k, v in sorted(point.params.items()))
+        spec = self.process.gridpack(point)
+        cards = os.path.relpath(
+            spec.cards_template, os.path.join(self.ana_path(), "models")
+        )
+        repos = "\n".join(
+            f"| {repo} | `{_git_head(os.path.join(self.ana_path(), sub))}` |"
+            for repo, sub in (
+                ("DSProd", ""),
+                ("DSProdModels (`models/`)", "models"),
+                ("genproductions_scripts", "genproductions_scripts"),
+            )
+        )
+        return f"""# {name}
+
+Point parameters: {params or "none"}.
+
+## Origin
+
+**Generated by DSProd** (setup `{self.setup_name}`) on {datetime.date.today().isoformat()}, with
+`genproductions_scripts/bin/{spec.generator}/gridpack_generation.sh` from the cards in
+[DSProdModels `{cards}`](https://github.com/cms-flaf/DSProdModels/tree/main/{cards}).
+
+Exact code it was produced with:
+
+| repository | commit |
+|---|---|
+{repos}
+
+| | |
+|---|---|
+| size | {os.path.getsize(path)} bytes |
+| sha256 | `{gridpack_store.sha256sum(path)}` |
+| collected from | `{self.storage_path("gridpacks", name, "gridpack.tar.xz")}` on `fs_default` |
+"""
+
+    def run(self):
+        root = gridpack_store.store_root(self.ana_path())
+        if not gridpack_store.is_available(root):
+            raise RuntimeError(
+                f"the gridpack store is not checked out at {root}; run ./setup_gridpacks.sh"
+            )
+
+        rows, collected = [], []
+        for point in self.gridpack_points():
+            name = self.process.gridpack_name(point)
+            rel = self.process.gridpack_rel_path(point)
+            if gridpack_store.contains(root, rel):
+                rows.append((name, "in store", rel))
+                continue
+            target = self.storage_target("gridpacks", name, "gridpack.tar.xz")
+            if not target.exists():
+                rows.append((name, "not produced", rel))
+                continue
+            dest = gridpack_store.local_path(root, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with target.localize("r") as inp:
+                shutil.copy(inp.abspath, dest)
+            readme = os.path.join(os.path.dirname(dest), "README.md")
+            if not os.path.exists(readme):
+                with open(readme, "w") as f:
+                    f.write(self._readme(point, dest, rel))
+            rows.append((name, "collected", rel))
+            collected.append(rel)
+
+        width = max(len(r[0]) for r in rows) if rows else 0
+        print(f"\nGridpack store: {root}")
+        for name, status, _ in rows:
+            print(f"  {name:<{width}}  {status}")
+        if collected:
+            print(
+                f"\n{len(collected)} gridpack(s) copied into the store. To commit them:\n"
+            )
+            for cmd in gridpack_store.git_add_hint(root, collected):
+                print(f"  {cmd}")
+            print(
+                "\n`--sparse` is required: the store is checked out sparsely, and a plain "
+                "`git add` skips the tarballs."
+            )
+        else:
+            print("\nNothing new to commit.")
+
+        self.output().parent.touch()
+        self.output().dump(
+            {
+                "setup": self.setup_name,
+                "store": root,
+                "gridpacks": [{"name": n, "status": s, "path": p} for n, s, p in rows],
+            },
+            indent=2,
+            formatter="json",
+        )
 
 
 class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):

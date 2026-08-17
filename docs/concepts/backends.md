@@ -41,6 +41,11 @@ unpacked by `bootstrap.sh`; CMSSW is set up from cvmfs on the worker. DSProd own
 log I/O (products go to the production's storage area via the gfal-CLI interface), so CRAB's own
 stageout and log transfer are forced off.
 
+**Gridpacks are not part of that tarball** — the input sandbox is size-limited, and a ~30 MB
+gridpack per job would be wasteful anyway. A production job downloads the gridpack it needs from
+`fs_default`, where [`ImportGridpack` or `MakeGridpack`](tasks.md) put it. The `gridpacks/` store
+is likewise never shipped: importing from it is local by construction.
+
 ### Requirements
 
 - a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see

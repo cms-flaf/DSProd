@@ -40,10 +40,10 @@ walks the models tree, loads every `plugin.py`, and then resolves the name from 
 
 ### Gridpacks: locate-or-generate
 
-A point never names its gridpack. `MakeGridpack` computes the gridpack's canonical location in the
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store via
-`gridpack_rel_path(point)` and imports it if present, otherwise generates it. So the plugin
-provides two things:
+A point never names its gridpack. Its canonical location in the
+[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store comes from
+`gridpack_rel_path(point)`: [`ImportGridpack`](../concepts/tasks.md) copies it to `fs_default` if
+the store has it, and `MakeGridpack` generates it otherwise. So the plugin provides two things:
 
 - **where the gridpack lives** — override `gridpack_rel_path(point, era)` to return the path
   (relative to the `gridpacks` store) mirroring the model's own directory convention. Its first

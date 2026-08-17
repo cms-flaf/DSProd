@@ -20,8 +20,9 @@ flowchart TD
     IC[InstallCMSSW<br/>per era] -.-> RP
 ```
 
-- **`MakeGridpack`** provides the gridpack for each point — either *imported* from an existing
-  tarball (a central gridpack on cvmfs or EOS) or *generated* from cards via
+- **`ImportGridpack`** copies a gridpack the DSProdGridpacks store already has to `fs_default`;
+  it is always local, since reading the store needs git + Git LFS.
+- **`MakeGridpack`** generates the gridpacks nothing else can provide, from cards via
   `genproductions_scripts`.
 - **`RunProd`** runs the fused CMSSW chain (`LHEGS → DIGIPremixHLT → RECO → MiniAOD → NanoAOD`)
   for one `(era, point, seed)`, and stages one NanoAOD file per requested version.
@@ -47,9 +48,11 @@ The models live in a separate submodule, [DSProdModels](https://github.com/cms-f
 [writing one module](../configuration/processes.md) — plugin plus its cards/fragment — in
 DSProdModels; the task graph is untouched.
 
-Generated (or private) gridpacks can be kept under version control in a second submodule,
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `gridpacks/`,
-Git LFS); `MakeGridpack` locates a point's gridpack there automatically and generates it if absent.
+Gridpacks are kept under version control in a second submodule,
+[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `gridpacks/`, private,
+Git LFS). It is checked out sparsely — only the provenance `README.md` files — and a gridpack is
+fetched from it on demand; `CollectGridpacks` is the way back, copying newly produced gridpacks
+into the checkout for committing. See [Tasks](tasks.md).
 
 ## Per-era conditions
 
