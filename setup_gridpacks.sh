@@ -24,7 +24,8 @@ if [ ! -e "$store/.git" ]; then
   # GIT_LFS_SKIP_SMUDGE keeps the initial checkout from pulling ~30 MB per gridpack
   if ! GIT_LFS_SKIP_SMUDGE=1 git -C "$this_dir" submodule update --init gridpacks; then
     echo
-    echo "Could not check out cms-flaf/DSProdGridpacks (it is private)." >&2
+    echo "Could not check out cms-flaf/DSProdGridpacks on gitlab.cern.ch (check your CERN" >&2
+    echo "account has access to the cms-flaf group and that your SSH key is registered there)." >&2
     echo "This is not fatal: DSProd generates gridpacks it cannot find there." >&2
     exit 0
   fi

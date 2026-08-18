@@ -49,8 +49,8 @@ The models live in a separate submodule, [DSProdModels](https://github.com/cms-f
 DSProdModels; the task graph is untouched.
 
 Gridpacks are kept under version control in a second submodule,
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) (mounted at `gridpacks/`, private,
-Git LFS). It is checked out sparsely — only the provenance `README.md` files — and a gridpack is
+[DSProdGridpacks](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) (mounted at `gridpacks/`, on
+CERN GitLab, Git LFS). It is checked out sparsely — only the provenance `README.md` files — and a gridpack is
 fetched from it on demand; `CollectGridpacks` is the way back, copying newly produced gridpacks
 into the checkout for committing. See [Tasks](tasks.md).
 
@@ -78,7 +78,7 @@ final merged NanoAOD follows the private-nano (HLepRare) convention that FLAF co
 `<point>` is the point's `name` — the DAS name of the sample it reproduces — and `<gridpack-name>`
 carries the production mode (`GluGlutoRadiontoHH_M-800`), because this level is flat: the
 process/generator/energy/mode directories of the
-[gridpack store](https://github.com/cms-flaf/DSProdGridpacks) are not repeated here.
+[gridpack store](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) are not repeated here.
 
 One file system serves every backend, so `--workflow local`, `htcondor` and `crab` write to
 exactly these paths; CRAB's own stageout is disabled (see [Backends](backends.md)).

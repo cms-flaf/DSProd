@@ -125,7 +125,7 @@ it sets are taken from that same name:
   to the setup-level `production_mode:`, which is why the points above do not repeat it.
 
 A point does **not** name its gridpack. Its canonical location in the
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store follows from the process,
+[DSProdGridpacks](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) store follows from the process,
 generator, energy and gridpack name, and then:
 
 - **if the gridpack is present there**, `ImportGridpack` copies it to `fs_default`;

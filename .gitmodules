@@ -8,5 +8,5 @@
 	branch = main
 [submodule "dsprod_gridpacks"]
 	path = gridpacks
-	url = git@github.com:cms-flaf/DSProdGridpacks.git
+	url = ssh://git@gitlab.cern.ch:7999/cms-flaf/DSProdGridpacks.git
 	branch = main

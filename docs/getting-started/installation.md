@@ -11,7 +11,7 @@ DSProd uses three submodules:
 |---|---|---|
 | `genproductions_scripts` | `genproductions_scripts/` | CMS gridpack generators (GitLab cms-gen) |
 | [DSProdModels](https://github.com/cms-flaf/DSProdModels) | `models/` | model plugins + production cards + gen fragments |
-| [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) | `gridpacks/` | stored gridpacks (private, Git LFS) |
+| [DSProdGridpacks](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) | `gridpacks/` | stored gridpacks (CERN GitLab, Git LFS) |
 
 ```bash
 git clone git@github.com:cms-flaf/DSProd.git
@@ -24,9 +24,12 @@ git submodule update --init models genproductions_scripts
 is not checked out.
 
 !!! warning "Do not use `git clone --recursive`"
-    `gridpacks` is **private** (so it is not exposed publicly and outside clones cannot spend the
-    organisation's Git-LFS quota), and a recursive clone would try to check it out — and download
-    every gridpack. Init the submodules as above instead.
+    A recursive clone would check `gridpacks` out and download every gridpack. Init the submodules
+    as above instead, then run `setup_gridpacks.sh`.
+
+    The gridpack store lives on **CERN GitLab** (`gitlab.cern.ch/cms-flaf/DSProdGridpacks`), so
+    access to it follows your CERN account and needs no extra GitHub permissions; the other two
+    submodules stay on GitHub.
 
 ### The gridpack store
 

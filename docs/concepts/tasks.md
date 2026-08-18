@@ -28,7 +28,7 @@ gridpack already is:
 | state | what happens |
 |---|---|
 | already on `fs_default` | nothing — both tasks are complete |
-| in the [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store | **`ImportGridpack`** copies it to `fs_default` |
+| in the [DSProdGridpacks](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) store | **`ImportGridpack`** copies it to `fs_default` |
 | nowhere | **`MakeGridpack`** generates it, and stages the result to `fs_default` |
 
 The setup never names a gridpack: its location in the store is derived from the process's
@@ -82,7 +82,7 @@ staged per-seed inputs. Output is the final, FLAF-facing file:
 ### `CollectGridpacks`
 
 The way back: it collects the gridpacks a setup **produced** into the local
-[DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) checkout, so they can be committed
+[DSProdGridpacks](https://gitlab.cern.ch/cms-flaf/DSProdGridpacks) checkout, so they can be committed
 and reused (and so the next production imports them instead of regenerating them).
 
 For each distinct gridpack of the setup it reports one of three states — already `in store`,
