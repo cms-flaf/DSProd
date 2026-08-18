@@ -27,9 +27,9 @@ is not checked out.
     A recursive clone would check `gridpacks` out and download every gridpack. Init the submodules
     as above instead, then run `setup_gridpacks.sh`.
 
-    The gridpack store lives on **CERN GitLab** (`gitlab.cern.ch/cms-flaf/DSProdGridpacks`), so
-    access to it follows your CERN account and needs no extra GitHub permissions; the other two
-    submodules stay on GitHub.
+    The gridpack store lives on **CERN GitLab** (`gitlab.cern.ch/cms-flaf/DSProdGridpacks`), with
+    **internal** visibility: any authenticated CERN account can read it, and no GitHub permission is
+    involved. The other two submodules stay on GitHub.
 
 ### The gridpack store
 
