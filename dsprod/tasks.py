@@ -11,12 +11,16 @@ added in later phases and reuse these bases.
 import contextlib
 import copy
 import datetime
+import fnmatch
 import glob
+import hashlib
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from dataclasses import replace
 
 import law
 import luigi
@@ -100,8 +104,7 @@ def runprod_branches(eras, points):
     out = []
     for era in eras:
         for pi, point in enumerate(points):
-            n_jobs = math.ceil(point.events_total / point.events_per_job)
-            for job in range(n_jobs):
+            for job in range(point.n_jobs(era)):
                 out.append((era, pi, job + 1))  # seed = 1-based job index
     return out
 
@@ -124,13 +127,23 @@ def cmssw_releases_for_era(conditions, era):
 
 class Task(law.Task):
     setup = luigi.Parameter(description="path to the production setup YAML")
+    points = law.CSVParameter(
+        default=(),
+        description="produce only the points whose name matches one of these patterns "
+        "(fnmatch globs, e.g. '*_M-800'); default: every point of the setup",
+    )
+    test = luigi.IntParameter(
+        default=0,
+        description="test mode: produce this many events per point and era in a single job, "
+        "into a separate `<output>_test` area; 0 (default) = full production",
+    )
 
     # class-level cache: a single setup is loaded once per process
     setup_path = None
     prod_setup = None
     conditions = None
     process = None
-    points = None
+    all_points = None
 
     def __init__(self, *args, **kwargs):
         super(Task, self).__init__(*args, **kwargs)
@@ -142,7 +155,7 @@ class Task(law.Task):
             with open(cond_path, "r") as f:
                 Task.conditions = yaml.safe_load(f)
             Task.process = registry.get_process(Task.prod_setup["process"])
-            Task.points = Task.process.enumerate_points(Task.prod_setup)
+            Task.all_points = Task.process.enumerate_points(Task.prod_setup)
             Task.setup_path = setup_path
         if setup_path != Task.setup_path:
             raise RuntimeError(
@@ -151,9 +164,41 @@ class Task(law.Task):
         self.prod_setup = Task.prod_setup
         self.conditions = Task.conditions
         self.process = Task.process
-        self.points = Task.points
+        self.prod_points = self._select_points(Task.all_points)
         _, setup_full_name = os.path.split(setup_path)
         self.setup_name, _ = os.path.splitext(setup_full_name)
+
+    def _select_points(self, points):
+        """Apply `--points` and `--test`.
+
+        Selecting a subset only narrows what this run produces: output paths are keyed by era,
+        point name and seed, never by branch id, so a selective run writes exactly where the full
+        production would.
+        """
+        if self.points:
+            patterns = list(self.points)
+            points = [
+                p
+                for p in points
+                if any(fnmatch.fnmatch(p.name, pat) for pat in patterns)
+            ]
+            if not points:
+                raise RuntimeError(
+                    f"--points {','.join(patterns)} matches no point of {self.setup}"
+                )
+        if self.test > 0:
+            # one short job per point and era, wherever the setup produces that point
+            points = [
+                replace(
+                    p,
+                    events_total={
+                        era: self.test for era, n in p.events_total.items() if n > 0
+                    },
+                    events_per_job=self.test,
+                )
+                for p in points
+            ]
+        return points
 
     # ---- setup accessors ----------------------------------------------------
     @property
@@ -167,7 +212,7 @@ class Task(law.Task):
         of MakeGridpack branch numbering, mirrored by `gridpack_index()`.
         """
         seen = {}
-        for point in self.points:
+        for point in self.prod_points:
             seen.setdefault(self.process.gridpack_name(point), point)
         return list(seen.values())
 
@@ -200,7 +245,19 @@ class Task(law.Task):
         return os.path.join(self.ana_path(), path)
 
     def store_parts(self):
-        return (self.__class__.__name__, self.setup_name)
+        """Local (job/bookkeeping) directory of this run.
+
+        A point selection and `--test` renumber the branches, so they get their own directory —
+        otherwise law would match this run's job data against a differently-numbered one.
+        """
+        name = self.setup_name
+        if self.points:
+            patterns = ",".join(sorted(self.points))
+            slug = re.sub(r"\W+", "", "".join(sorted(self.points)))[:24]
+            name += f"_{slug}{hashlib.sha1(patterns.encode()).hexdigest()[:6]}"
+        if self.test > 0:
+            name += f"_test{self.test}"
+        return (self.__class__.__name__, name)
 
     def local_path(self, *path):
         parts = (self.ana_data_path(),) + self.store_parts() + path
@@ -218,10 +275,33 @@ class Task(law.Task):
             return law.LocalFileTarget(path, fs=fs)
         return WLCGFileTarget(path, fs=fs)
 
+    def prod_storage_name(self):
+        """Top-level product directory of the *production* on `fs_default` (setup `output`)."""
+        return self.prod_setup.get("output", self.setup_name)
+
+    def storage_name(self):
+        """Top-level product directory of this run.
+
+        `--test` appends `_test`, so a short test run can never overwrite a production sample.
+        """
+        name = self.prod_storage_name()
+        return f"{name}_test" if self.test > 0 else name
+
     def storage_path(self, *parts):
-        """Path of a product relative to `fs_default`: <setup `output`>/<parts...>."""
-        name = self.prod_setup.get("output", self.setup_name)
-        return os.path.join(name, *parts)
+        """Path of a product relative to `fs_default`: <storage name>/<parts...>."""
+        return os.path.join(self.storage_name(), *parts)
+
+    def gridpack_target(self, gridpack_name):
+        """Where a gridpack lives on `fs_default`.
+
+        Always the production area, also under `--test`: a gridpack does not depend on the number
+        of events, so a test run reuses the production one instead of regenerating it.
+        """
+        return self.remote_target(
+            os.path.join(
+                self.prod_storage_name(), "gridpacks", gridpack_name, "gridpack.tar.xz"
+            )
+        )
 
     def storage_target(self, *parts):
         return self.remote_target(self.storage_path(*parts))
@@ -338,8 +418,7 @@ class GridpackTask(Task):
         return self.process.gridpack_rel_path(self.branch_data)
 
     def output(self):
-        name = self.process.gridpack_name(self.branch_data)
-        return self.storage_target("gridpacks", name, "gridpack.tar.xz")
+        return self.gridpack_target(self.process.gridpack_name(self.branch_data))
 
 
 class ImportGridpack(GridpackTask, law.LocalWorkflow):
@@ -503,7 +582,7 @@ Exact code it was produced with:
 |---|---|
 | size | {os.path.getsize(path)} bytes |
 | sha256 | `{gridpack_store.sha256sum(path)}` |
-| collected from | `{self.storage_path("gridpacks", name, "gridpack.tar.xz")}` on `fs_default` |
+| collected from | `{self.gridpack_target(name).path}` on `fs_default` |
 """
 
     def run(self):
@@ -520,7 +599,7 @@ Exact code it was produced with:
             if gridpack_store.contains(root, rel):
                 rows.append((name, "in store", rel))
                 continue
-            target = self.storage_target("gridpacks", name, "gridpack.tar.xz")
+            target = self.gridpack_target(name)
             if not target.exists():
                 rows.append((name, "not produced", rel))
                 continue
@@ -571,7 +650,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
 
     def create_branch_map(self):
-        return dict(enumerate(runprod_branches(self.eras, self.points)))
+        return dict(enumerate(runprod_branches(self.eras, self.prod_points)))
 
     def workflow_requires(self):
         return {
@@ -583,7 +662,9 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     def requires(self):
         era, pi, _ = self.branch_data
         # MakeGridpack branches over distinct gridpacks, so map this point to its gridpack branch
-        gp_branch = self.gridpack_index()[self.process.gridpack_name(self.points[pi])]
+        gp_branch = self.gridpack_index()[
+            self.process.gridpack_name(self.prod_points[pi])
+        ]
         return {
             "voms": CreateVomsProxy.req(self),
             "cmssw": InstallCMSSW.req(
@@ -600,14 +681,14 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     def output(self):
         era, pi, seed = self.branch_data
-        point = self.points[pi]
+        point = self.prod_points[pi]
         return {
             v: self._staged_target(era, point, v, seed) for v in self.nano_versions(era)
         }
 
     def run(self):
         era, pi, seed = self.branch_data
-        point = self.points[pi]
+        point = self.prod_points[pi]
         fragment = self.process.gen_fragment(point, era)
         n_evt = point.events_per_job
         with contextlib.ExitStack() as stack:
@@ -648,9 +729,8 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         branches = {}
         bid = 0
         for era in self.eras:
-            for pi, point in enumerate(self.points):
-                n_jobs = math.ceil(point.events_total / point.events_per_job)
-                seeds = list(range(1, n_jobs + 1))
+            for pi, point in enumerate(self.prod_points):
+                seeds = list(range(1, point.n_jobs(era) + 1))
                 for version in self.nano_versions(era):
                     for group, start in enumerate(range(0, len(seeds), fpm)):
                         branches[bid] = (
@@ -664,7 +744,9 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         return branches
 
     def _runprod_index(self):
-        return {bd: i for i, bd in enumerate(runprod_branches(self.eras, self.points))}
+        return {
+            bd: i for i, bd in enumerate(runprod_branches(self.eras, self.prod_points))
+        }
 
     def workflow_requires(self):
         return {"runprod": RunProd.req(self)}
@@ -676,7 +758,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     def output(self):
         era, pi, version, group, _ = self.branch_data
-        name = self.process.point_name(self.points[pi])
+        name = self.process.point_name(self.prod_points[pi])
         return self.storage_target(
             f"nanoAOD_{version}", era, name, f"nano_{version}_{group}.root"
         )

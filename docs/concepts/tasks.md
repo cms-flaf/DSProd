@@ -62,7 +62,8 @@ via `cmsDriver` steps (`dsprod/run_step.py`). Branches are enumerated by
 ```
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
-point). The number of seeds per point follows from `events_total / events_per_job`.
+point). The number of seeds per point and era follows from
+`events_total[era] / events_per_job` — `events_total` is per era, so one setup covers all of them.
 
 ### `NanoMergeTask`
 
@@ -113,6 +114,10 @@ Not yet implemented.
 - `--print-status -1` — show what LAW considers done vs. pending for the full graph, without
   running anything.
 - `--print-deps -1` — print the dependency tree (with the backend each task would use).
+- `--points '<glob>'` — produce only the matching points of the setup (see
+  [production setups](../configuration/prod-setups.md#running-part-of-a-setup)).
+- `--test <n>` — produce `<n>` events per point and era in one job, into a separate `<output>_test`
+  area.
 - `--branch <n>` / `--branches <a,b>` — run only selected branches of a workflow.
 - `--workers <n>` — run several branches in parallel locally.
 - `--<TaskName>-<param> <value>` — override a parameter of an upstream task

@@ -59,13 +59,13 @@ Every production task accepts `--workflow local|htcondor|crab`. A production is 
 
 ```bash
 # local test
-law run MakeGridpack --setup models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml --workflow local
+law run MakeGridpack --setup models/X_HH/setups/Run3_XHHbbWW.yaml --points '*_M-800' --workflow local
 
 # HTCondor (CERN batch)
-law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow htcondor
+law run RunProd --setup models/X_HH/setups/Run3_XHHbbWW.yaml --workflow htcondor
 
 # CRAB (WLCG grid) — needs a VOMS proxy + a MyProxy credential valid >= 5 days
-law run RunProd --setup models/X_HH_bbWW/setups/Run3_XHHbbWW.yaml --workflow crab
+law run RunProd --setup models/X_HH/setups/Run3_XHHbbWW.yaml --workflow crab
 ```
 
 Storage area and CRAB site/resource settings are **not** in the setup — they live in
