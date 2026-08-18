@@ -47,9 +47,9 @@ points:
     spin: 0
     final_state: 2B2JLNu                  # the gen fragment (DAS final-state token)
     events_total:                         # per era; an era left out produces nothing
-      Run3_2023: 207000
-      Run3_2023BPix: 112000
-      Run3_2024: 2845000
+      Run3_2023: 210000
+      Run3_2023BPix: 120000
+      Run3_2024: 2850000
 ```
 
 | Field | Meaning |
@@ -73,9 +73,9 @@ luminosity still fits in one setup:
 
 ```yaml
     events_total:
-      Run3_2023: 207000
-      Run3_2023BPix: 112000
-      Run3_2024: 2845000
+      Run3_2023: 210000
+      Run3_2023BPix: 120000
+      Run3_2024: 2850000
 ```
 
 A scalar is also accepted and means "this many in every era". An era that a point does not list
