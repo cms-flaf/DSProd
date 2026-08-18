@@ -54,7 +54,8 @@ A value starting with `/` selects a local file system; anything else is treated 
     separate CRAB output location. (Later, more granular `fs_*` keys can be added, as in FLAF.)
 
 A production writes to `<fs_default>/<output>`, where `output` is named by the
-[production setup](prod-setups.md).
+[production setup](prod-setups.md); `--test` writes to `<output>_test` instead. The layout inside
+it is described in [Architecture](../concepts/architecture.md#storage-layout).
 
 ## `config/global.yaml` (committed defaults)
 

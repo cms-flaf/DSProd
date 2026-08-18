@@ -75,6 +75,33 @@ final merged NanoAOD follows the private-nano (HLepRare) convention that FLAF co
 └── nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root          (final, for FLAF)
 ```
 
+`<point>` is the point's `name` — the DAS name of the sample it reproduces — and `<gridpack-name>`
+carries the production mode (`GluGlutoRadiontoHH_M-800`), because this level is flat: the
+process/generator/energy/mode directories of the
+[gridpack store](https://github.com/cms-flaf/DSProdGridpacks) are not repeated here.
+
+One file system serves every backend, so `--workflow local`, `htcondor` and `crab` write to
+exactly these paths; CRAB's own stageout is disabled (see [Backends](backends.md)).
+
+!!! note "`--test` writes elsewhere"
+    A run with `--test <n>` replaces `<output>` by **`<output>_test`** for the event products, so a
+    check can never overwrite a production sample. Gridpacks are the exception — they do not depend
+    on the number of events, so they stay in the production area and a test reuses them.
+
+### Local bookkeeping
+
+Everything that is not a product stays in the checkout, under `$ANALYSIS_DATA_PATH` (`data/`):
+
+```
+data/<TaskClass>/<setup>/          law job files, CRAB PSet + code tarball, InstallCMSSW flags,
+                                   CollectGridpacks reports
+```
+
+The directory gains a suffix when `--points` or `--test` narrow the run
+(`<setup>_<selection><hash>_test<n>`), because both renumber the branches and law keys its control
+files by branch range — two differently-scoped runs must not share job data. CMSSW releases live
+outside it, in `soft/<CMSSW_VERSION>/`.
+
 All remote I/O goes through DSProd's own gfal-CLI file interface
 (`dsprod/grid_tools.py` + `law_gfal.py` + `law_wlcg.py`), ported from FLAF. It shells out to the
 `gfal-*` command-line tools rather than the `gfal2` Python module, which is what lets the same
