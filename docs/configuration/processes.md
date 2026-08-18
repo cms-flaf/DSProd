@@ -81,9 +81,14 @@ models/                                 (the DSProdModels submodule, mounted at 
         ├── scripts/                    # (optional) prodcard-generation scripts (e.g. parametrized in mX)
         ├── models/                     # (optional) custom generator models, when not centrally available
         └── 13p6TeV/                    # center-of-mass energy (LAST level)
-            ├── cards/                  # genproductions cards (proc_card, run_card, customizecards, extramodels)
-            └── fragments/              # CMSSW gen fragment(s) — one per decay channel
+            ├── cards/                  # genproductions cards, one directory per production mode
+            │   └── <production_mode>/   # proc_card, run_card, customizecards, extramodels
+            └── fragments/              # CMSSW gen fragments — one per final state
 ```
+
+Model directories and the names inside them follow the **DAS tokens** of the central samples the
+model reproduces (`GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800` → production mode `GluGlutoRadion`,
+final state `2B2JLNu`), so a setup point reads like the dataset it produces.
 
 Only `plugin.py`, `cards/`, a gen fragment, and the READMEs are required; `filters/`, `scripts/`,
 and `models/` appear only when a model needs them. The plugin resolves its energy-specific inputs

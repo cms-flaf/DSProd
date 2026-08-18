@@ -406,7 +406,7 @@ class GridpackTask(Task):
     """Shared branch map and output location of the gridpack-providing tasks.
 
     Branches over *distinct* gridpacks, not points: several points can share one gridpack (e.g.
-    the decay channels of X->HH->bbWW, where the Higgses leave the generator undecayed), and one
+    the final states of X->HH->bbWW, where the Higgses leave the generator undecayed), and one
     branch per point would make them race on the same output.
     """
 

@@ -21,8 +21,8 @@ batch tasks require it so the releases exist before jobs run.
 
 Both provide the same product — `<output>/gridpacks/<gridpack-name>/gridpack.tar.xz`, relative to
 `fs_default` — and both branch over **distinct** gridpacks, not points, since several points can
-share one (the SL and DL channels of a mass point use the same gridpack, and one branch per point
-would make them race on the same output). Which of the two does the work depends only on where the
+share one (the `2B2JLNu` and `2B2L2Nu` final states of a mass point use the same gridpack, and one
+branch per point would make them race on the same output). Which of the two does the work depends only on where the
 gridpack already is:
 
 | state | what happens |

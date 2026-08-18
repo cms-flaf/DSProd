@@ -39,11 +39,13 @@ last_step: NANO                           # last production step
 events_per_job: 2000                      # events per RunProd seed
 files_per_merge: 25                       # per-seed nanos per NanoMergeTask group
 
+production_mode: GluGlutoRadion           # default production mode for the points below
+
 points:
-  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800
+  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800   # the DAS dataset name
     mass: 800
     spin: 0
-    channel: SL
+    final_state: 2B2JLNu                  # the gen fragment (DAS final-state token)
     events_total:                         # per era; an era left out produces nothing
       Run3_2023: 207000
       Run3_2023BPix: 112000
@@ -85,7 +87,7 @@ silently produce zero events.
 Two options on **every** task make separate setups unnecessary:
 
 ```bash
-# only the M-800 samples (both channels), full statistics
+# only the M-800 samples (both final states), full statistics
 law run RunProd --setup <setup> --points '*_M-800'
 
 # a 100-event end-to-end check of one sample, into a separate `<output>_test` area
@@ -104,8 +106,23 @@ Both are ordinary task parameters, so they propagate to the upstream tasks of th
 ## Points and gridpacks
 
 The `points` list is interpreted by the process's `enumerate_points`, so the recognised keys are
-process-specific. For `X_HH` each point has a `name`, `mass`, `spin`, `channel` (the gen fragment
-that decays the HH pair, e.g. `SL` or `DL`) and `events_total`.
+process-specific. For `X_HH` each point has a `name`, `mass`, `spin`, `final_state`,
+`events_total`, and optionally `production_mode`.
+
+**Names follow DAS.** A point is named after the central dataset it reproduces, and the two tokens
+it sets are taken from that same name:
+
+```
+/GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800/...
+ └──────┬──────┘            └──┬───┘
+  production_mode            final_state
+```
+
+- `final_state` selects the gen fragment `<comEnergy>/fragments/<final_state>.py`, so adding a
+  final state to a model is adding a fragment;
+- `production_mode` selects the cards `<comEnergy>/cards/<production_mode>/` and, with them, the
+  gridpack naming — so a second production mode (VBF, …) is a second cards directory. It defaults
+  to the setup-level `production_mode:`, which is why the points above do not repeat it.
 
 A point does **not** name its gridpack. Its canonical location in the
 [DSProdGridpacks](https://github.com/cms-flaf/DSProdGridpacks) store follows from the process,
