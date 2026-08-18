@@ -32,7 +32,11 @@ gridpack already is:
 | nowhere | **`MakeGridpack`** generates it, and stages the result to `fs_default` |
 
 The setup never names a gridpack: its location in the store is derived from the process's
-`gridpack_rel_path`, and presence there alone decides import vs. generate.
+`gridpack_rel_path`, which mirrors the model's own layout level for level
+(`<process>/<generator>/<comEnergy>/<production_mode>/<gridpack-name>/`), and presence there alone
+decides import vs. generate. The gridpack **name** carries the production mode
+(`GluGlutoRadiontoHH_M-800`), because a production stores its gridpacks flat under
+`<output>/gridpacks/`.
 
 `ImportGridpack` is **always local**, and `MakeGridpack` requires it, so the import has happened
 by the time `MakeGridpack` decides what to submit. That matters: reading the store needs the git
@@ -94,7 +98,7 @@ the task ends by printing the commands to run:
 ```bash
 law run CollectGridpacks --setup <setup>
 # ... then, as printed:
-git -C gridpacks add --sparse '<process>/<generator>/<comEnergy>/<gridpack-name>'
+git -C gridpacks add --sparse '<process>/<generator>/<comEnergy>/<production-mode>/<gridpack-name>'
 git -C gridpacks commit -m "add ..."
 git -C gridpacks push
 ```

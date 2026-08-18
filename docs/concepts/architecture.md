@@ -70,7 +70,7 @@ final merged NanoAOD follows the private-nano (HLepRare) convention that FLAF co
 
 ```
 <fs_default>/<output>/
-├── gridpacks/<point>/gridpack.tar.xz
+├── gridpacks/<gridpack-name>/gridpack.tar.xz
 ├── staging/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.root   (removed after merge)
 └── nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root          (final, for FLAF)
 ```
