@@ -6,6 +6,7 @@ gridpack lives in the store (and how to generate it if absent), and how to rende
 fragment. Everything process-specific lives here; the law tasks stay generic.
 """
 
+import math
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -29,11 +30,43 @@ class GridpackSpec:
 class Point:
     """A concrete production unit: one physics point of one process."""
 
-    process: str  # registry key of the owning ProcessCustomization, e.g. "X_HH_bbWW"
+    process: str  # registry key of the owning ProcessCustomization, e.g. "X_HH"
     name: str  # canonical storage name, e.g. "GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-800"
-    params: dict = field(default_factory=dict)  # process parameters (mass, spin, ...)
-    events_total: int = 0
+    params: dict = field(
+        default_factory=dict
+    )  # process parameters (mass, spin, channel, ...)
+    #: events to produce **per era**, {era: n}. An era that is missing produces nothing, so one
+    #: setup covers every era instead of one setup per era.
+    events_total: dict = field(default_factory=dict)
     events_per_job: int = 0
+
+    def n_events(self, era):
+        """Events to produce for `era` (0 when this point is not produced there)."""
+        return int(self.events_total.get(era, 0))
+
+    def n_jobs(self, era):
+        """Number of production jobs (seeds) for `era`."""
+        n = self.n_events(era)
+        if n <= 0 or self.events_per_job <= 0:
+            return 0
+        return math.ceil(n / self.events_per_job)
+
+
+def events_per_era(value, eras):
+    """Normalize a setup's `events_total` into `{era: n}`.
+
+    Accepts a scalar (the same number in every era) or a mapping. An unknown era is an error
+    rather than a silent zero — a typo there would produce nothing at all.
+    """
+    if isinstance(value, dict):
+        unknown = sorted(set(value) - set(eras))
+        if unknown:
+            raise ValueError(
+                f"events_total refers to era(s) {unknown} that the setup does not produce; "
+                f"eras are {list(eras)}"
+            )
+        return {era: int(value.get(era, 0)) for era in eras}
+    return {era: int(value) for era in eras}
 
 
 class ProcessCustomization(ABC):

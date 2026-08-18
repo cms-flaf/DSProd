@@ -1,59 +1,42 @@
 # Your first production
 
-DSProd ships a small **test setup** that exercises the whole chain — gridpack generation, the
-fused GEN→NanoAOD step, and the merge — on a tiny number of events. It is the fastest way to
-confirm your environment works.
+The fastest way to confirm your environment works is to run a real production setup in **test
+mode**: `--test <n>` produces `<n>` events per point and era in a single job, and `--points`
+narrows it to one sample. There is no separate test setup to keep in sync — and because test
+products go to `<output>_test`, they can never overwrite a production sample.
 
-## The test setup
-
-`models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml` produces a single X→HH→bbWW resonant point
-(M-666, which is not a central mass, so no gridpack is stored for it and it is **generated**),
-100 events, one era:
-
-```yaml
-process: X_HH_bbWW
-conditions: config/conditions_Run3.yaml
-output: XHHbbWW_test
-eras: [ Run3_2022EE ]
-nano_versions:
-  Run3_2022EE: [ v12, v15 ]
-first_step: LHEGS
-last_step: NANO
-events_per_job: 100
-files_per_merge: 10
-points:
-  - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-666
-    mass: 666
-    spin: 0
-    events_total: 100
-```
+## Run it
 
 Set your EOS area once in `config/user_custom.yaml` (`fs_default`); the setup only names the
 `output` sub-directory. See [Global & user config](../configuration/settings.md).
 
-## Run it
-
-Run the final task; LAW schedules everything upstream. Start with the merge target on the local
-backend:
+Then run the final task — LAW schedules everything upstream:
 
 ```bash
 source env.sh
 law run NanoMergeTask \
-  --setup models/X_HH_bbWW/setups/Run3_XHHbbWW_test.yaml \
+  --setup models/X_HH/setups/Run3_XHHbbWW.yaml \
+  --points '*_M-800' --test 100 \
   --workflow local
 ```
+
+This produces 100 events of the M-800 single-lepton sample in each era of the setup. Add
+`--branches 0` (or a narrower `--points`) to keep it to a single job while you are just checking
+the environment.
 
 What happens, in order:
 
 1. **`InstallCMSSW`** builds the CMSSW releases the era needs (first run only; cached afterwards).
-2. **`MakeGridpack`** finds no stored M-666 gridpack in DSProdGridpacks, so it generates one from
-   the process [cards](../configuration/processes.md).
+2. **`ImportGridpack`** copies the M-800 gridpack from DSProdGridpacks to your storage area. (For a
+   mass that is not stored there, **`MakeGridpack`** generates one from the process
+   [cards](../configuration/processes.md) instead — pick a non-central mass to exercise that.)
 3. **`RunProd`** runs the fused GEN→…→MiniAOD→NanoAOD chain and stages one nano per requested
    version.
 4. **`NanoMergeTask`** merges the per-seed nanos, verifies the event count, and drops the staged
    inputs.
 
-The merged output lands under your storage area (`<fs_default>/XHHbbWW_test`), ready for FLAF.
+The merged output lands under your storage area (`<fs_default>/XHHbbWW_test`, the `_test` suffix
+coming from `--test`), ready for FLAF.
 
 !!! tip "Run just one stage"
     To stop earlier, run an upstream task directly, e.g. `law run MakeGridpack --setup … --workflow

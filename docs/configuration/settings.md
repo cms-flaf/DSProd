@@ -15,14 +15,16 @@ nested maps are deep-merged (see `dsprod/config.py`).
 
 ## Create your `config/user_custom.yaml`
 
-The one **required** setting is `fs_default` — the file system all products are written to:
+Optional: `global.yaml` already points `fs_default` at the **shared production area at FNAL**, so a
+fresh checkout writes there. Create `user_custom.yaml` when you want your own space instead — always
+do this for tests, so you do not write into the production tree:
 
 ```yaml
 # config/user_custom.yaml
 fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/
 ```
 
-Replace the host and path with your own EOS area. Optionally override any `global.yaml` value in
+Replace the host and path with your own EOS area. You can override any `global.yaml` value in
 the same file, e.g. the CRAB processing site:
 
 ```yaml
@@ -52,7 +54,8 @@ A value starting with `/` selects a local file system; anything else is treated 
     separate CRAB output location. (Later, more granular `fs_*` keys can be added, as in FLAF.)
 
 A production writes to `<fs_default>/<output>`, where `output` is named by the
-[production setup](prod-setups.md).
+[production setup](prod-setups.md); `--test` writes to `<output>_test` instead. The layout inside
+it is described in [Architecture](../concepts/architecture.md#storage-layout).
 
 ## `config/global.yaml` (committed defaults)
 
@@ -60,18 +63,22 @@ A production writes to `<fs_default>/<output>`, where `output` is named by the
 crab:
   max_memory_mb: 2500
   max_cores: 1
-  # whitelist: [ T2_CH_CERN, ... ]  # optional; empty (default) = all CMS processing sites
+  # whitelist: [ T2_CH_CERN, ... ]  # optional; unset (default) = every tier T1_*/T2_*/T3_*
   # blacklist: [ ... ]              # optional; exclude misbehaving sites
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
+  # parallel_jobs: 5000             # optional; jobs per CRAB task / in flight
+  # refill_fraction: 0.2            # optional; free-slot fraction that triggers the next task
 ```
 
 The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),
 so there is no CRAB output location to configure. These can also be overridden per run on the
 command line (e.g. `--crab-whitelist`, `--crab-memory`).
 
-**No whitelist by default.** DSProd jobs have no real input dataset, so they can run at any CMS
-processing site; leaving the whitelist empty gives the widest pool, and setting one can only narrow
-it. See [Backends](../concepts/backends.md#site-selection) for when restricting is worthwhile.
+**Every site by default.** DSProd jobs have no real input dataset, so they can run at any CMS
+processing site. The CRAB client insists on a `Site.whitelist` whenever `ignoreLocality` is set, so
+an unset one becomes `T1_*`, `T2_*`, `T3_*` — the widest pool it accepts; configuring one can only
+narrow it. See [Backends](../concepts/backends.md#site-selection) for when restricting is
+worthwhile, and [Job waves](../concepts/backends.md#job-waves) for `parallel_jobs`/`refill_fraction`.
 
 !!! note "On grid workers"
     Being git-ignored does not mean being absent from jobs: the CRAB code tarball ships the whole

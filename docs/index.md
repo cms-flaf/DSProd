@@ -25,7 +25,8 @@ steps needed to produce the requested output:
 
 ```mermaid
 flowchart TD
-    GP[MakeGridpack<br/>import or generate the gridpack] --> RP[RunProd<br/>fused GEN→…→MiniAOD→NanoAOD per seed]
+    IG[ImportGridpack<br/>gridpack from the store] --> RP[RunProd<br/>fused GEN→…→MiniAOD→NanoAOD per seed]
+    GP[MakeGridpack<br/>generate what the store lacks] --> RP
     RP --> NM[NanoMergeTask<br/>hadd per-seed nanos into groups]
     NM --> FLAF[FLAF private-nano input]
     IC[InstallCMSSW<br/>per-era CMSSW releases] -.provides.-> RP

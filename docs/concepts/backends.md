@@ -41,6 +41,11 @@ unpacked by `bootstrap.sh`; CMSSW is set up from cvmfs on the worker. DSProd own
 log I/O (products go to the production's storage area via the gfal-CLI interface), so CRAB's own
 stageout and log transfer are forced off.
 
+**Gridpacks are not part of that tarball** — the input sandbox is size-limited, and a ~30 MB
+gridpack per job would be wasteful anyway. A production job downloads the gridpack it needs from
+`fs_default`, where [`ImportGridpack` or `MakeGridpack`](tasks.md) put it. The `gridpacks/` store
+is likewise never shipped: importing from it is local by construction.
+
 ### Requirements
 
 - a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see
@@ -52,6 +57,8 @@ stageout and log transfer are forced off.
 crab:
   max_memory_mb: 2500
   max_cores: 1
+  # parallel_jobs: 5000     # jobs per CRAB task / in flight
+  # refill_fraction: 0.2    # submit the next task once this fraction of slots is free
 ```
 
 !!! note "No CRAB output location"
@@ -60,12 +67,24 @@ crab:
     it transfers nothing; DSProd fills those in automatically as a submit-time formality, so there
     is nothing to configure and no second storage area to keep in sync.
 
+### Job waves
+
+A production of tens of thousands of branches cannot be one CRAB task (a task holds at most a few
+thousand jobs). DSProd therefore keeps at most `crab.parallel_jobs` jobs in flight — 5000 by
+default — and submits the next CRAB task once `crab.refill_fraction` (default 0.2) of those slots
+is free. So a 43 000-branch production is simply launched as one `law run`; there is no need to
+chunk the branch range by hand. `--parallel-jobs <n>` on the command line overrides both.
+
+Without the refill threshold law would create a new CRAB task as soon as a single job finished,
+producing hundreds of one-job tasks.
+
 ### Site selection
 
 DSProd jobs carry **no real input dataset** (they generate their own events, and the CRAB config
-sets `ignoreLocality`), so nothing ties them to a particular site. By default **no whitelist is
-set**, which means CRAB may schedule them at *any* CMS processing site — the widest possible pool.
-Adding a whitelist can only narrow it, so do not add one just to "get more sites".
+sets `ignoreLocality`), so nothing ties them to a particular site. Because `ignoreLocality` is set,
+the CRAB client **requires** a `Site.whitelist`; DSProd therefore defaults it to every tier
+(`T1_*`, `T2_*`, `T3_*`), which is the widest pool the client accepts. Configuring a `whitelist`
+can only narrow it, so do not add one just to "get more sites".
 
 Restricting is worth it in two situations:
 

@@ -2,8 +2,9 @@
 
 DSProd deliberately does not depend on RunKit as a submodule; only the small,
 stable set of functions below is needed. Keep in sync with the originals:
-  - ps_call, PsCallError, update_kerberos_ticket, timed_call_wrapper,
+  - ps_call, PsCallError, timed_call_wrapper,
     repeat_until_success, adler32sum                    <- FLAF/RunKit/run_tools.py
+  - update_kerberos_ticket (FLAF name: update_kinit)    <- FLAF/RunKit/kinit.py
   - get_voms_proxy_info                                <- FLAF/RunKit/grid_tools.py
   - CreateVomsProxy                              <- FLAF/RunKit/grid_helper_tasks.py
 Remote file I/O reuses FLAF's gfal-CLI file interface (dsprod/grid_tools.py +
@@ -14,6 +15,7 @@ the gfal2 python module is unavailable but the gfal-* CLIs are.
 import datetime
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -185,7 +187,15 @@ def adler32sum(file_name):
 
 
 def update_kerberos_ticket(verbose=1):
-    ps_call(["kinit", "-R"], verbose=verbose)
+    """Renew the Kerberos ticket and the AFS token (FLAF/RunKit/kinit.py:update_kinit).
+
+    Never raises: it runs for hours inside polling loops, where losing the loop is worse than
+    a failed renewal. `aklog` is what actually refreshes the AFS token law writes through.
+    """
+    if shutil.which("kinit"):
+        ps_call(["kinit", "-R"], expected_return_codes=None, verbose=verbose)
+    if shutil.which("aklog"):
+        ps_call(["aklog"], expected_return_codes=None, verbose=verbose)
 
 
 def timed_call_wrapper(fn, update_interval, verbose=0):

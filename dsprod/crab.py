@@ -14,8 +14,10 @@ backend. Only the compute knobs are configurable, in the merged global config
     crab:
       max_memory_mb: 2500
       max_cores: 1
-      # whitelist: [ ... ]   # optional; empty (default) = all CMS processing sites
-      # blacklist: [ ... ]   # optional; exclude sites that fail to reach the storage
+      # whitelist: [ ... ]       # optional; default = every tier (T1_*, T2_*, T3_*)
+      # blacklist: [ ... ]       # optional; exclude sites that fail to reach the storage
+      # parallel_jobs: 5000      # jobs per CRAB task / in flight; --parallel-jobs wins
+      # refill_fraction: 0.2     # submit the next wave once this fraction of slots is free
 """
 
 import math
@@ -23,10 +25,13 @@ import os
 import re
 import subprocess
 import uuid
+from collections import OrderedDict
 
 import law
 import luigi
 from law.job.base import JobInputFile
+
+from .tools import timed_call_wrapper, update_kerberos_ticket
 
 law.contrib.load("cms")
 
@@ -34,9 +39,28 @@ law.contrib.load("cms")
 #: submit-time check requires a site the user can write to; CERNBOX is the CERN-account default.
 _CRAB_DUMMY_SITE = "T3_CH_CERNBOX"
 
+#: Site.whitelist used when the config sets none. It is NOT optional: DSProd jobs have no input
+#: dataset, so the config sets `Data.ignoreLocality`, and the CRAB client then refuses to submit
+#: without a whitelist ("when ignoreLocality is set a valid site white list must be specified",
+#: CRABClient/Commands/submit.py). Listing every tier is the widest pool the client accepts.
+_CRAB_ALL_SITES = ("T1_*", "T2_*", "T3_*")
+
+#: jobs per CRAB task, and the number law keeps in flight. A CRAB task tops out around 10k jobs,
+#: so a large production (tens of thousands of branches) must be split into waves rather than
+#: submitted as one task.
+_CRAB_DEFAULT_PARALLEL_JOBS = 5000
+
+#: fraction of the slots that must be free before the next wave is submitted. Without it law
+#: submits a fresh CRAB task as soon as a single job finishes, producing hundreds of 1-job tasks.
+_CRAB_DEFAULT_REFILL_FRACTION = 0.2
+
 
 def build_code_tarball(ana_path, out_path):
-    """Tar the DSProd code needed on a WLCG worker (no AFS there)."""
+    """Tar the DSProd code needed on a WLCG worker (no AFS there).
+
+    Deliberately **without** `gridpacks`: a CRAB input sandbox is size-limited, and a job that
+    needs a gridpack downloads it from `fs_default` (where `MakeGridpack` put it) at run time.
+    """
     includes = [
         "dsprod",
         "models",  # model plugins + cards + fragments (DSProdModels submodule)
@@ -113,13 +137,93 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
 _CrabProxyBase = law.cms.CrabWorkflow.workflow_proxy_cls
 
 
+def _cli_has_parallel_jobs():
+    """True when the user passed ``--parallel-jobs`` (or a task-prefixed form)."""
+    parser = luigi.cmdline_parser.CmdlineParser.get_instance()
+    tokens = list(getattr(parser, "cmdline_args", None) or [])
+    for tok in tokens:
+        if tok in ("--parallel-jobs", "--parallel_jobs"):
+            return True
+        if tok.startswith("--parallel-jobs=") or tok.startswith("--parallel_jobs="):
+            return True
+        if tok.endswith("-parallel-jobs") or tok.endswith("-parallel_jobs"):
+            return True
+        if "-parallel-jobs=" in tok or "-parallel_jobs=" in tok:
+            return True
+    return False
+
+
 class DSProdCrabWorkflowProxy(_CrabProxyBase):
+    def __init__(self, *args, **kwargs):
+        super(DSProdCrabWorkflowProxy, self).__init__(*args, **kwargs)
+        self._apply_crab_parallel_jobs()
+
+    def _apply_crab_parallel_jobs(self):
+        """Cap the jobs in flight, and therefore the size of one CRAB task.
+
+        law's default is unlimited, and DSProd tasks also inherit `HTCondorWorkflow`, so the
+        value can only be fixed here: a production with tens of thousands of branches would
+        otherwise be submitted as a single CRAB task, far above what a task can hold.
+        """
+        if _cli_has_parallel_jobs():
+            return
+        cfg_n = self.task._crab_cfg().get("parallel_jobs")
+        if cfg_n is not None:
+            self._set_parallel_jobs(int(cfg_n))
+            return
+        if self.poll_data.n_parallel == self.n_parallel_max:
+            self._set_parallel_jobs(_CRAB_DEFAULT_PARALLEL_JOBS)
+
+    def _crab_refill_fraction(self):
+        raw = self.task._crab_cfg().get(
+            "refill_fraction", _CRAB_DEFAULT_REFILL_FRACTION
+        )
+        try:
+            frac = float(raw)
+        except (TypeError, ValueError):
+            frac = _CRAB_DEFAULT_REFILL_FRACTION
+        return min(max(frac, 0.0), 1.0)
+
+    def _should_submit_crab_group(self):
+        """Whether to submit now, or wait until enough slots are free.
+
+        The first wave always goes out; afterwards a new CRAB task is only worth creating once a
+        sizeable fraction of the slots is free. Unlimited `parallel_jobs` keeps law's behaviour.
+        """
+        n_parallel = self.poll_data.n_parallel
+        if n_parallel >= self.n_parallel_max:
+            return True
+        if (not self.job_data.jobs) and (not self._submitted):
+            return True
+        free = n_parallel - self.poll_data.n_active
+        return free >= self._crab_refill_fraction() * n_parallel
+
+    def submit(self, retry_jobs=None):
+        if self._should_submit_crab_group():
+            return super(DSProdCrabWorkflowProxy, self).submit(retry_jobs)
+
+        # park retries as unsubmitted, so the next eligible wave picks them up as one larger
+        # CRAB task instead of creating a task for a handful of jobs now
+        if retry_jobs:
+            for job_num, branches in retry_jobs.items():
+                if self._can_skip_job(job_num, branches):
+                    continue
+                self.job_data.jobs.pop(job_num, None)
+                self.job_data.unsubmitted_jobs[job_num] = branches
+            self.dump_job_data()
+        return OrderedDict()
+
     def setup_job_manager(self):
         """Gate submission on a valid VOMS proxy + a MyProxy credential the CRAB server needs."""
         proxy = os.environ.get("X509_USER_PROXY", "")
         if not proxy or not os.path.isfile(proxy):
             raise RuntimeError(
                 "CRAB needs a VOMS proxy (X509_USER_PROXY). Run: "
+                "voms-proxy-init --voms cms -valid 192:00"
+            )
+        if not law.wlcg.check_vomsproxy_validity(proxy_file=proxy):
+            raise RuntimeError(
+                f"VOMS proxy at {proxy} is expired. Run: "
                 "voms-proxy-init --voms cms -valid 192:00"
             )
         kwargs = {"proxy": proxy}
@@ -143,10 +247,21 @@ class DSProdCrabWorkflowProxy(_CrabProxyBase):
 
 
 class CrabWorkflow(law.cms.CrabWorkflow):
-    """CRAB remote workflow mixin for DSProd tasks."""
+    """CRAB remote workflow mixin for DSProd tasks.
+
+    A production of tens of thousands of branches is submitted as a series of CRAB tasks of
+    `crab.parallel_jobs` jobs each (see `DSProdCrabWorkflowProxy`), so no manual chunking of the
+    branch range is needed.
+    """
 
     workflow_proxy_cls = DSProdCrabWorkflowProxy
     poll_interval = luigi.FloatParameter(default=5.0, significant=False)
+
+    #: lazily-built, throttled `kinit -R` used while polling (see crab_poll_callback)
+    _crab_kerberos_update = None
+
+    #: code tarball shipped to the workers, built once per law process (see _code_tarball)
+    _code_tarball_path = None
 
     crab_memory = luigi.IntParameter(
         default=-1,
@@ -198,10 +313,16 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return path
 
     def _code_tarball(self):
-        """Build (once per submission) the code tarball shipped via CRAB inputFiles."""
-        out = os.path.join(self.local_path(), "dsprod_code.tar.gz")
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        return build_code_tarball(self.ana_path(), out)
+        """The code tarball shipped via CRAB inputFiles, built once per law process.
+
+        A large production is submitted in several waves; rebuilding per wave would ship
+        different code to different jobs if the checkout is touched meanwhile.
+        """
+        if self._code_tarball_path is None:
+            out = os.path.join(self.local_path(), "dsprod_code.tar.gz")
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            self._code_tarball_path = build_code_tarball(self.ana_path(), out)
+        return self._code_tarball_path
 
     def crab_stageout_location(self):
         """CRAB demands a `Site.storageSite` + `Data.outLFNDirBase` even when it transfers nothing.
@@ -216,7 +337,15 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return law.LocalDirectoryTarget(self.local_path())
 
     def crab_request_name(self, submit_jobs):
-        name = "_".join([self.task_family.replace(".", "_"), uuid.uuid4().hex[:8]])
+        # a large production is submitted as many CRAB tasks; naming them after the setup keeps
+        # them identifiable in `crab status` and the monitoring dashboard
+        name = "_".join(
+            [
+                self.task_family.replace(".", "_"),
+                str(self.setup_name).replace(".", "_"),
+                uuid.uuid4().hex[:8],
+            ]
+        )
         return re.sub(r"[^A-Za-z0-9_\-]", "_", name)[:100]
 
     def crab_bootstrap_file(self):
@@ -235,6 +364,23 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     def crab_check_job_completeness(self):
         return False
 
+    def crab_poll_callback(self, poll_data):
+        # a large CRAB production polls for days, while law keeps writing its job status files to
+        # the AFS work area — renew the Kerberos ticket as the HTCondor backend does
+        if self._crab_kerberos_update is None:
+
+            def renew_kerberos_ticket():
+                update_kerberos_ticket(verbose=0)
+
+            krenew = float(getattr(self, "krenew", 1) or 0)
+            self._crab_kerberos_update = (
+                timed_call_wrapper(renew_kerberos_ticket, krenew * 3600)
+                if krenew > 0
+                else (lambda: None)
+            )
+        self._crab_kerberos_update()
+        return True
+
     def crab_job_file_factory_cls(self):
         return DSProdCrabJobFileFactory
 
@@ -248,6 +394,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         n_cores = max(n_cpus, (mem + mb_per_core - 1) // mb_per_core)
         n_cores = max(1, min(n_cores, max_cores))
         mem = max(mem, n_cores * mb_per_core)
+        # the CRAB client refuses a task above max(5000, 2500 * numCores) MB, so clamp instead of
+        # letting a generous `max_memory_mb` (with a low `max_cores`) fail the whole submission
+        mem = min(mem, max(5000, 2500 * n_cores))
 
         config.crab.JobType.psetName = self._ensure_crab_pset(n_cores)
         config.crab.JobType.numCores = n_cores
@@ -281,12 +430,12 @@ class CrabWorkflow(law.cms.CrabWorkflow):
             self._crab_cfg().get("blacklist") or []
         )
         # DSProd generation jobs have no real input dataset, so they can run at ANY CMS processing
-        # site. Leaving the whitelist empty (the default) is therefore the widest possible pool —
-        # setting one can only ever narrow it. Do NOT auto-whitelist the *storage* site either: it
-        # may not be a processing site (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in
-        # the list of known CMS Processing Site Names").
-        if whitelist:
-            config.crab.Site.whitelist = [str(s) for s in whitelist]
+        # site — but `ignoreLocality` below makes a whitelist mandatory for the CRAB client, so an
+        # unset one becomes every tier rather than nothing. Configuring one can only narrow the
+        # pool. Do NOT auto-whitelist the *storage* site either: it may not be a processing site
+        # (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in the list of known CMS
+        # Processing Site Names").
+        config.crab.Site.whitelist = [str(s) for s in whitelist or _CRAB_ALL_SITES]
         if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]
         # Keep CMS's global blacklist of known-broken sites in force unless explicitly waived:
