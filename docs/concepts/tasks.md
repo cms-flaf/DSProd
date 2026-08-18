@@ -14,7 +14,7 @@ The tasks live in `dsprod/tasks.py`.
 
 Installs, once on the shared AFS area, the CMSSW releases an era's production needs (all
 production steps plus every requested NanoAOD version). It is a **local** workflow with one
-branch per era, and is idempotent — `env.sh` guards each release with a `.installed` flag. The
+branch per selected era, and is idempotent — `env.sh` guards each release with a `.installed` flag. The
 batch tasks require it so the releases exist before jobs run.
 
 ### `ImportGridpack` and `MakeGridpack`
@@ -118,8 +118,8 @@ Not yet implemented.
 - `--print-status -1` — show what LAW considers done vs. pending for the full graph, without
   running anything.
 - `--print-deps -1` — print the dependency tree (with the backend each task would use).
-- `--points '<glob>'` — produce only the matching points of the setup (see
-  [production setups](../configuration/prod-setups.md#running-part-of-a-setup)).
+- `--eras '<glob>'` / `--points '<glob>'` — produce only the matching eras / points of the setup
+  (see [production setups](../configuration/prod-setups.md#running-part-of-a-setup)).
 - `--test <n>` — produce `<n>` events per point and era in one job, into a separate `<output>_test`
   area.
 - `--branch <n>` / `--branches <a,b>` — run only selected branches of a workflow.

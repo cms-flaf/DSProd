@@ -61,6 +61,9 @@ Every production task accepts `--workflow local|htcondor|crab`. A production is 
 # local test
 law run MakeGridpack --setup models/X_HH/setups/Run3_XHHbbWW.yaml --points '*_M-800' --workflow local
 
+# one era only (--eras / --points / --test narrow any task; see docs)
+law run RunProd --setup models/X_HH/setups/Run3_XHHbbWW.yaml --eras Run3_2023 --workflow htcondor
+
 # HTCondor (CERN batch)
 law run RunProd --setup models/X_HH/setups/Run3_XHHbbWW.yaml --workflow htcondor
 

@@ -84,24 +84,33 @@ silently produce zero events.
 
 ## Running part of a setup
 
-Two options on **every** task make separate setups unnecessary:
+Three options on **every** task make separate setups unnecessary:
 
 ```bash
+# one era of the full grid
+law run RunProd --setup <setup> --eras Run3_2023
+
 # only the M-800 samples (both final states), full statistics
 law run RunProd --setup <setup> --points '*_M-800'
 
-# a 100-event end-to-end check of one sample, into a separate `<output>_test` area
-law run RunProd --setup <setup> --points '*_M-800' --test 100
+# a 100-event end-to-end check of one sample in one era, into a separate `<output>_test` area
+law run RunProd --setup <setup> --eras Run3_2023 --points '*_M-800' --test 100
 ```
 
-- `--points` takes fnmatch globs matched against point names (comma-separated for several). Output
-  paths are keyed by era, point and seed — never by branch id — so a selective run writes exactly
-  where the full production would, and the rest can be produced later.
+- `--eras` takes fnmatch globs matched against the setup's `eras:` (comma-separated for several,
+  e.g. `'Run3_2023*'` for 2023 and 2023BPix). Everything downstream follows: `InstallCMSSW` builds
+  only the releases those eras need, and a point that produces no events in them drops out of the
+  run, so its gridpack is not prepared either.
+- `--points` takes the same kind of globs, matched against point names.
 - `--test <n>` produces `<n>` events per point and era in a single job, and redirects the products
   to `<output>_test` so a check can never overwrite a production sample. Gridpacks are exempt: they
   do not depend on the event count, so a test reuses the production ones.
 
-Both are ordinary task parameters, so they propagate to the upstream tasks of the same run.
+A pattern that matches nothing is an error, never an empty run. Output paths are keyed by era,
+point and seed — never by branch id — so a selective run writes exactly where the full production
+would, and the rest can be produced later. All three are ordinary task parameters, so they
+propagate to the upstream tasks of the same run, and each combination gets its own local job area
+(law keys its control files by branch range).
 
 ## Points and gridpacks
 

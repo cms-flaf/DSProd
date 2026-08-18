@@ -82,6 +82,20 @@ def is_remote_path(path):
     return path.startswith(_REMOTE_PREFIXES)
 
 
+def select_by_pattern(values, patterns, option, setup, key=lambda v: v):
+    """Filter `values` by fnmatch `patterns`; no patterns keeps everything.
+
+    Matching nothing is an error: a run that silently produces nothing is worse than one that
+    refuses to start.
+    """
+    if not patterns:
+        return list(values)
+    selected = [v for v in values if any(fnmatch.fnmatch(key(v), p) for p in patterns)]
+    if not selected:
+        raise RuntimeError(f"{option} {','.join(patterns)} matches nothing in {setup}")
+    return selected
+
+
 def _git_head(path):
     """Commit a checkout is on, for provenance records ("unknown" outside a git checkout)."""
     try:
@@ -127,6 +141,11 @@ def cmssw_releases_for_era(conditions, era):
 
 class Task(law.Task):
     setup = luigi.Parameter(description="path to the production setup YAML")
+    eras = law.CSVParameter(
+        default=(),
+        description="produce only the eras matching one of these patterns (fnmatch globs, e.g. "
+        "'Run3_2023*'); default: every era of the setup",
+    )
     points = law.CSVParameter(
         default=(),
         description="produce only the points whose name matches one of these patterns "
@@ -164,28 +183,31 @@ class Task(law.Task):
         self.prod_setup = Task.prod_setup
         self.conditions = Task.conditions
         self.process = Task.process
+        self.prod_eras = select_by_pattern(
+            Task.prod_setup["eras"], self.eras, "--eras", self.setup
+        )
         self.prod_points = self._select_points(Task.all_points)
         _, setup_full_name = os.path.split(setup_path)
         self.setup_name, _ = os.path.splitext(setup_full_name)
 
     def _select_points(self, points):
-        """Apply `--points` and `--test`.
+        """Apply `--points`, the era selection and `--test`.
 
         Selecting a subset only narrows what this run produces: output paths are keyed by era,
         point name and seed, never by branch id, so a selective run writes exactly where the full
         production would.
         """
-        if self.points:
-            patterns = list(self.points)
-            points = [
-                p
-                for p in points
-                if any(fnmatch.fnmatch(p.name, pat) for pat in patterns)
-            ]
-            if not points:
-                raise RuntimeError(
-                    f"--points {','.join(patterns)} matches no point of {self.setup}"
-                )
+        points = select_by_pattern(
+            points, self.points, "--points", self.setup, key=lambda p: p.name
+        )
+        # a point that produces nothing in the selected eras is not part of this run at all —
+        # its gridpack would otherwise be prepared for no reason
+        points = [p for p in points if any(p.n_events(e) > 0 for e in self.prod_eras)]
+        if not points:
+            raise RuntimeError(
+                f"no selected point of {self.setup} produces events in eras "
+                f"{','.join(self.prod_eras)}"
+            )
         if self.test > 0:
             # one short job per point and era, wherever the setup produces that point
             points = [
@@ -201,10 +223,6 @@ class Task(law.Task):
         return points
 
     # ---- setup accessors ----------------------------------------------------
-    @property
-    def eras(self):
-        return self.prod_setup["eras"]
-
     def gridpack_points(self):
         """One representative point per *distinct* gridpack, in setup order.
 
@@ -251,10 +269,11 @@ class Task(law.Task):
         otherwise law would match this run's job data against a differently-numbered one.
         """
         name = self.setup_name
-        if self.points:
-            patterns = ",".join(sorted(self.points))
-            slug = re.sub(r"\W+", "", "".join(sorted(self.points)))[:24]
-            name += f"_{slug}{hashlib.sha1(patterns.encode()).hexdigest()[:6]}"
+        for patterns in (self.eras, self.points):
+            if patterns:
+                joined = ",".join(sorted(patterns))
+                slug = re.sub(r"\W+", "", "".join(sorted(patterns)))[:24]
+                name += f"_{slug}{hashlib.sha1(joined.encode()).hexdigest()[:6]}"
         if self.test > 0:
             name += f"_test{self.test}"
         return (self.__class__.__name__, name)
@@ -383,7 +402,7 @@ class InstallCMSSW(Task, law.LocalWorkflow):
     """
 
     def create_branch_map(self):
-        return dict(enumerate(self.eras))
+        return dict(enumerate(self.prod_eras))
 
     def output(self):
         return self.local_target(f"{self.branch_data}.installed")
@@ -650,7 +669,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
 
     def create_branch_map(self):
-        return dict(enumerate(runprod_branches(self.eras, self.prod_points)))
+        return dict(enumerate(runprod_branches(self.prod_eras, self.prod_points)))
 
     def workflow_requires(self):
         return {
@@ -668,7 +687,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         return {
             "voms": CreateVomsProxy.req(self),
             "cmssw": InstallCMSSW.req(
-                self, branch=self.eras.index(era), workflow="local"
+                self, branch=self.prod_eras.index(era), workflow="local"
             ),
             "gridpack": MakeGridpack.req(self, branch=gp_branch),
         }
@@ -728,7 +747,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         fpm = int(self.prod_setup.get("files_per_merge", 20))
         branches = {}
         bid = 0
-        for era in self.eras:
+        for era in self.prod_eras:
             for pi, point in enumerate(self.prod_points):
                 seeds = list(range(1, point.n_jobs(era) + 1))
                 for version in self.nano_versions(era):
@@ -745,7 +764,8 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     def _runprod_index(self):
         return {
-            bd: i for i, bd in enumerate(runprod_branches(self.eras, self.prod_points))
+            bd: i
+            for i, bd in enumerate(runprod_branches(self.prod_eras, self.prod_points))
         }
 
     def workflow_requires(self):
