@@ -48,6 +48,8 @@ is likewise never shipped: importing from it is local by construction.
 
 ### Requirements
 
+- a shell with `env.sh` sourced — it puts DSProd's `crab` wrapper and `python` shim on `PATH`,
+  both of which law needs to drive CRAB (see the note below);
 - a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see
   [Installation](../getting-started/installation.md));
 - optionally, a `crab:` block in the [global / user config](../configuration/settings.md) — **not**
@@ -103,6 +105,15 @@ waives it, which is not recommended with an open site pool.
     If you do set a `whitelist`, every entry must be a genuine CMS **processing** site: do **not**
     put a storage-only site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission with
     "not in the list of known CMS Processing Site Names".
+
+!!! note "Why `env.sh` matters for CRAB"
+    law runs `crab` inside a CMSSW sandbox of its own, and dumps that sandbox's environment with
+    bare `python` — which modern CMSSW no longer ships, and for which the DSProd venv's `python`
+    is not a working substitute under a `cmsenv`. `env.sh` therefore writes a `crab` wrapper and a
+    `python` → `python3` shim into `soft/bin` and prepends it to `PATH`. Submitting from a shell
+    that never sourced `env.sh` fails the sandbox, and law reports it only indirectly, as every
+    job carrying `dummy_job_id` and being retried with `error: unknown job id`. DSProd now checks
+    the sandbox before submitting and reports that case directly.
 
 ### Debugging CRAB jobs
 

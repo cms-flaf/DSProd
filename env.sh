@@ -145,29 +145,38 @@ action() {
 
   # CRAB submission (--workflow crab): the crab CLI needs a cmsenv, which would clobber the
   # law venv. Provide a `crab` wrapper on PATH that cmsenv's a DSProd CMSSW internally, so the
-  # law parent keeps the venv and only the crab subprocess enters CMSSW. Set up only when a
-  # CMSSW release is present (installed by InstallCMSSW); harmless for htcondor/local runs.
-  local dsprod_cmssw=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
-  if [ -n "$dsprod_cmssw" ]; then
-    export CMSSW_BASE="${dsprod_cmssw%/}"
-    mkdir -p "$ANALYSIS_PATH/soft/bin"
-    cat > "$ANALYSIS_PATH/soft/bin/crab" <<'CRABWRAP'
+  # law parent keeps the venv and only the crab subprocess enters CMSSW.
+  #
+  # Both shims are written unconditionally. They used to be gated on a `soft/CMSSW_*` release
+  # already existing, but on a fresh production area the releases are installed by InstallCMSSW
+  # *during* the very run that then submits, so the gate was false and the whole law process ran
+  # without them -- every CRAB submission of that run failed (see the `python` shim below).
+  # Neither shim needs a release to exist: the wrapper looks one up when it is called.
+  mkdir -p "$ANALYSIS_PATH/soft/bin"
+  cat > "$ANALYSIS_PATH/soft/bin/crab" <<'CRABWRAP'
 #!/bin/bash
 source /cvmfs/cms.cern.ch/cmsset_default.sh
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
 exec /cvmfs/cms.cern.ch/common/crab "$@"
 CRABWRAP
-    chmod +x "$ANALYSIS_PATH/soft/bin/crab"
-    # law.contrib.cms's CMSSW sandbox runs bare `python`, but modern CMSSW ships only `python3`
-    # (and the venv's `python` breaks under a cmsenv). Provide a `python` -> python3 shim so it
-    # resolves to whichever python3 is active (CMSSW's inside the sandbox, the venv's outside).
-    cat > "$ANALYSIS_PATH/soft/bin/python" <<'PYSHIM'
+  chmod +x "$ANALYSIS_PATH/soft/bin/crab"
+  # law.contrib.cms's CMSSW sandbox runs bare `python` to dump its environment, but modern CMSSW
+  # ships only `python3`, and the venv's `python` breaks under a cmsenv (ModuleNotFoundError:
+  # _struct) -- which makes law fail every CRAB submission with "unknown job id". Provide a
+  # `python` -> python3 shim so it resolves to whichever python3 is active (CMSSW's inside the
+  # sandbox, the venv's outside).
+  cat > "$ANALYSIS_PATH/soft/bin/python" <<'PYSHIM'
 #!/bin/bash
 exec python3 "$@"
 PYSHIM
-    chmod +x "$ANALYSIS_PATH/soft/bin/python"
-    export PATH="$ANALYSIS_PATH/soft/bin:$PATH"
+  chmod +x "$ANALYSIS_PATH/soft/bin/python"
+  export PATH="$ANALYSIS_PATH/soft/bin:$PATH"
+
+  # CMSSW_BASE only means something once a release is installed (env.sh:104, dsprod/tasks.py).
+  local dsprod_cmssw=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
+  if [ -n "$dsprod_cmssw" ]; then
+    export CMSSW_BASE="${dsprod_cmssw%/}"
   fi
 
   # Convenience: run a command inside DEFAULT_CMSSW_BASE (set per-step by the tasks in Phase 3).

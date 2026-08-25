@@ -384,6 +384,28 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     def crab_job_file_factory_cls(self):
         return DSProdCrabJobFileFactory
 
+    def crab_create_job_manager(self, **kwargs):
+        """Create the job manager, and build its CMSSW sandbox, before anything is submitted.
+
+        law builds that sandbox lazily, inside every submission attempt. A failure there is
+        swallowed per job: each one is stored with `dummy_job_id`, polled as "unknown job id",
+        retried, and the workflow only dies when the retry tolerance is exceeded -- half an hour
+        later, with the real cause nowhere in the log. Building it here turns that into a single
+        actionable error before the first submission.
+        """
+        manager = super().crab_create_job_manager(**kwargs)
+        try:
+            manager.cmssw_env
+        except Exception as exc:
+            raise RuntimeError(
+                "could not set up the CMSSW sandbox that law runs `crab` in: "
+                f"{exc}\nThis usually means `python` on PATH is not the DSProd shim (the "
+                "sandbox dumps its environment with bare `python`, which CMSSW no longer "
+                "ships). Source env.sh in this shell -- it writes soft/bin/python and prepends "
+                "soft/bin to PATH -- and submit again."
+            ) from exc
+        return manager
+
     def crab_job_config(self, config, job_nums, branches=None):
         n_cpus = max(1, int(getattr(self, "n_cpus", 1) or 1))
         mem = int(self.crab_memory)
