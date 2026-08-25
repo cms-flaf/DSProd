@@ -31,7 +31,11 @@ import law
 import luigi
 from law.job.base import JobInputFile
 
-from .tools import timed_call_wrapper, update_kerberos_ticket
+from .tools import (
+    ResyncExistingBranchesProxy,
+    timed_call_wrapper,
+    update_kerberos_ticket,
+)
 
 law.contrib.load("cms")
 
@@ -153,7 +157,7 @@ def _cli_has_parallel_jobs():
     return False
 
 
-class DSProdCrabWorkflowProxy(_CrabProxyBase):
+class DSProdCrabWorkflowProxy(ResyncExistingBranchesProxy, _CrabProxyBase):
     def __init__(self, *args, **kwargs):
         super(DSProdCrabWorkflowProxy, self).__init__(*args, **kwargs)
         self._apply_crab_parallel_jobs()
