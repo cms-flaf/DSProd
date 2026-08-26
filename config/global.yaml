@@ -26,7 +26,7 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #   blacklist: [ ... ]              exclude sites (e.g. ones that cannot reach your storage)
 #   ignore_global_blacklist: true   waive CMS's known-broken-site list (not recommended)
 #   parallel_jobs: 5000             jobs per CRAB task and in flight (--parallel-jobs wins)
-#   refill_fraction: 0.2            submit the next task once this fraction of slots is free
+#   refill_fraction: 0.2            min wave size / free slots, as a fraction of parallel_jobs
 crab:
   max_memory_mb: 2500
   max_cores: 1

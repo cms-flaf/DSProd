@@ -60,7 +60,7 @@ crab:
   max_memory_mb: 2500
   max_cores: 1
   # parallel_jobs: 5000     # jobs per CRAB task / in flight
-  # refill_fraction: 0.2    # submit the next task once this fraction of slots is free
+  # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
 ```
 
 !!! note "No CRAB output location"
@@ -73,12 +73,30 @@ crab:
 
 A production of tens of thousands of branches cannot be one CRAB task (a task holds at most a few
 thousand jobs). DSProd therefore keeps at most `crab.parallel_jobs` jobs in flight — 5000 by
-default — and submits the next CRAB task once `crab.refill_fraction` (default 0.2) of those slots
-is free. So a 43 000-branch production is simply launched as one `law run`; there is no need to
-chunk the branch range by hand. `--parallel-jobs <n>` on the command line overrides both.
+default — and submits the rest in waves. So a 43 000-branch production is simply launched as one
+`law run`; there is no need to chunk the branch range by hand. `--parallel-jobs <n>` on the command
+line overrides both settings.
 
-Without the refill threshold law would create a new CRAB task as soon as a single job finished,
-producing hundreds of one-job tasks.
+A wave becomes its own CRAB task only when it is worth one. `crab.refill_fraction` (default 0.2)
+sets that bar as a fraction of `parallel_jobs`: with the defaults a wave needs **1000 jobs waiting
+and 1000 free slots**. Jobs below the bar are held back — but only for as long as reaching it is
+still possible. Once the work left in the whole production (running + waiting) can no longer fill
+a wave, waiting could only delay it, so whatever is waiting goes out at once, however little that
+is. `parallel_jobs` set to unlimited (`--parallel-jobs 0`) bypasses all of this and restores law's
+own behaviour.
+
+Two consequences worth knowing:
+
+- **Small productions are never batched.** A 12-job production can never fill a wave, so a job that
+  fails there is resubmitted on the next poll, exactly as before.
+- **Large productions have a short tail, not a serialised one.** Retries are held only while the
+  production is still busy; they are released as soon as fewer than one wave of work remains, not
+  when the last job finishes. A 3270-job production that loses 226 jobs early runs as two CRAB
+  tasks, with the retries going out around three quarters of the way through.
+
+This applies to retries and to never-submitted jobs alike. Without the size bar, law creates a
+fresh CRAB task the moment a single job finishes or fails — that 3270-job production produced a
+second, 226-job CRAB task ten minutes in.
 
 ### Site selection
 
