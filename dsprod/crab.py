@@ -190,26 +190,34 @@ class DSProdCrabWorkflowProxy(ResyncExistingBranchesProxy, _CrabProxyBase):
         return min(max(frac, 0.0), 1.0)
 
     def _should_submit_crab_group(self, n_waiting):
-        """Whether to submit now, or wait for more jobs to accumulate into one CRAB task.
+        """Whether to submit now, or hold the jobs back so they accumulate into one CRAB task.
 
-        Creating a CRAB task is expensive, so a wave has to be worth one: it needs both enough
-        jobs waiting and the room to run them. Two cases go out immediately -- unlimited
-        `parallel_jobs`, which keeps law's own behaviour, and an empty queue (`n_active == 0`),
-        which covers the first wave and the tail, where there is nothing left to accumulate with.
+        Creating a CRAB task is expensive and a task holds only a few thousand jobs, so a
+        production is submitted in waves of at least `refill_fraction * parallel_jobs` jobs. Jobs
+        are held back only while such a wave is still **achievable**: once the work left in the
+        whole production -- running plus waiting -- can no longer fill one, waiting can only delay
+        it, so whatever is waiting goes out immediately, however little that is. That covers the
+        tail of a large production and every small production (which can never fill a wave and so
+        is never batched at all), while a trickle of retries early on still accumulates.
 
-        `n_waiting` (unsubmitted + jobs offered for retry) is what makes this a real aggregation
-        threshold. Gating on free slots alone let a handful of retries out as their own CRAB task
-        whenever the production did not fill `parallel_jobs`: with 3270 of 5000 slots taken, 1730
-        were free, so the gate was open from the first poll onwards.
+        `n_waiting` (unsubmitted + jobs offered for retry) is what makes this an aggregation
+        threshold at all. Gating on free slots alone let a handful of retries out as their own CRAB
+        task whenever the production did not fill `parallel_jobs`: with 3270 of 5000 slots taken,
+        1730 were free, so the gate was open from the first poll onwards.
         """
         n_parallel = self.poll_data.n_parallel
         if n_parallel >= self.n_parallel_max:
+            # unlimited parallelism: keep law's own behaviour
             return True
-        if self.poll_data.n_active == 0:
+        if n_waiting <= 0:
             return True
-        wave = self._crab_refill_fraction() * n_parallel
-        free = n_parallel - self.poll_data.n_active
-        return n_waiting >= wave and free >= wave
+        n_active = self.poll_data.n_active
+        min_wave = self._crab_refill_fraction() * n_parallel
+        # a full-sized wave, and the room to run it
+        if min(n_waiting, n_parallel - n_active) >= min_wave:
+            return True
+        # even if every job still running were to fail, the next wave could not reach the bar
+        return n_active + n_waiting < min_wave
 
     def submit(self, retry_jobs=None):
         retry_jobs = retry_jobs or OrderedDict()

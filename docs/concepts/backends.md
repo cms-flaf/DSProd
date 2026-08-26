@@ -78,18 +78,25 @@ default — and submits the rest in waves. So a 43 000-branch production is simp
 line overrides both settings.
 
 A wave becomes its own CRAB task only when it is worth one. `crab.refill_fraction` (default 0.2)
-sets that bar as a fraction of `parallel_jobs`: with the defaults, a wave needs **1000 jobs waiting
-and 1000 free slots**. Anything smaller waits and accumulates. Two cases are exempt and go out
-immediately:
+sets that bar as a fraction of `parallel_jobs`: with the defaults a wave needs **1000 jobs waiting
+and 1000 free slots**. Jobs below the bar are held back — but only for as long as reaching it is
+still possible. Once the work left in the whole production (running + waiting) can no longer fill
+a wave, waiting could only delay it, so whatever is waiting goes out at once, however little that
+is. `parallel_jobs` set to unlimited (`--parallel-jobs 0`) bypasses all of this and restores law's
+own behaviour.
 
-- **nothing is in flight** — the first wave of a production, and the tail, where there is nothing
-  left to accumulate with;
-- **`parallel_jobs` is unlimited** (`--parallel-jobs 0`), which restores law's own behaviour.
+Two consequences worth knowing:
 
-This applies to retries as well as to jobs that have never been submitted: a job that fails while
-the production is still running is parked and picked up by the next eligible wave. Without the
-size bar, law creates a fresh CRAB task the moment a single job finishes or fails — a production
-of 3270 jobs with 226 early failures produced a second, 226-job CRAB task ten minutes in.
+- **Small productions are never batched.** A 12-job production can never fill a wave, so a job that
+  fails there is resubmitted on the next poll, exactly as before.
+- **Large productions have a short tail, not a serialised one.** Retries are held only while the
+  production is still busy; they are released as soon as fewer than one wave of work remains, not
+  when the last job finishes. A 3270-job production that loses 226 jobs early runs as two CRAB
+  tasks, with the retries going out around three quarters of the way through.
+
+This applies to retries and to never-submitted jobs alike. Without the size bar, law creates a
+fresh CRAB task the moment a single job finishes or fails — that 3270-job production produced a
+second, 226-job CRAB task ten minutes in.
 
 ### Site selection
 
