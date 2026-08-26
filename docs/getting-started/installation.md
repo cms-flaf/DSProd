@@ -94,6 +94,12 @@ voms-proxy-init --rfc --voms cms --valid 192:00
 
 DSProd looks for the proxy at `$X509_USER_PROXY` (falling back to `data/voms.proxy`).
 
+!!! note "Inside a job the delegated proxy is used as-is"
+    On a worker node DSProd takes whatever proxy the batch system put in `$X509_USER_PROXY` and
+    never renews or removes it: `voms-proxy-init` cannot run unattended there, and CRAB's
+    delegated proxy lives for slightly under 24 hours — shorter than the renewal threshold that
+    applies interactively.
+
 !!! tip "CRAB needs a MyProxy credential too"
     The [CRAB backend](../concepts/backends.md) additionally needs a MyProxy credential valid for
     at least five days. `voms-proxy-init` does not create it; CRAB does so on first submission,

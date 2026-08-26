@@ -66,7 +66,8 @@ via `cmsDriver` steps (`dsprod/run_step.py`). Branches are enumerated by
 ```
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
-point). The number of seeds per point and era follows from
+point). The proxy requirement is satisfied by the batch-delegated proxy
+inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). The number of seeds per point and era follows from
 `events_total[era] / events_per_job` — `events_total` is per era, so one setup covers all of them.
 
 ### `NanoMergeTask`
