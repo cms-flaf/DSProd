@@ -198,6 +198,22 @@ def update_kerberos_ticket(verbose=1):
         ps_call(["aklog"], expected_return_codes=None, verbose=verbose)
 
 
+class ResyncExistingBranchesProxy:
+    """Remote-workflow-proxy mixin: re-check which branch outputs exist before submitting.
+
+    law records that set when luigi *schedules* the workflow (`process_resources`), which happens
+    before the workflow's own requirements have run, and never refreshes it afterwards. A task
+    whose requirement produces some of its own outputs -- `MakeGridpack`, whose `ImportGridpack`
+    requirement copies in every gridpack the store already has -- would otherwise submit a job per
+    branch and redo all of that work.
+    """
+
+    def run(self):
+        self._existing_branches = None
+        self._skip_jobs.clear()
+        return super(ResyncExistingBranchesProxy, self).run()
+
+
 def timed_call_wrapper(fn, update_interval, verbose=0):
     last_update = None
 

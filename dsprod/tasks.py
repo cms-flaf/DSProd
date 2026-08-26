@@ -32,6 +32,7 @@ from .crab import CrabWorkflow
 from .law_wlcg import WLCGFileSystem, WLCGFileTarget
 from .tools import (
     CreateVomsProxy,
+    ResyncExistingBranchesProxy,
     ps_call,
     timed_call_wrapper,
     update_kerberos_ticket,
@@ -332,7 +333,9 @@ class Task(law.Task):
         return tempfile.mkdtemp(dir=self.local_path()), True
 
 
-class HTCondorWorkflowProxy(law.htcondor.workflow.HTCondorWorkflowProxy):
+class HTCondorWorkflowProxy(
+    ResyncExistingBranchesProxy, law.htcondor.workflow.HTCondorWorkflowProxy
+):
     def __init__(self, *args, **kwargs):
         super(HTCondorWorkflowProxy, self).__init__(*args, **kwargs)
         if self.task.krenew > 0:
