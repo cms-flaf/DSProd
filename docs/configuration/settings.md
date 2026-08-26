@@ -67,7 +67,7 @@ crab:
   # blacklist: [ ... ]              # optional; exclude misbehaving sites
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
   # parallel_jobs: 5000             # optional; jobs per CRAB task / in flight
-  # refill_fraction: 0.2            # optional; free-slot fraction that triggers the next task
+  # refill_fraction: 0.2            # optional; min wave size, as a fraction of parallel_jobs
 ```
 
 The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),

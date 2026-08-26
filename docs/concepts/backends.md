@@ -60,7 +60,7 @@ crab:
   max_memory_mb: 2500
   max_cores: 1
   # parallel_jobs: 5000     # jobs per CRAB task / in flight
-  # refill_fraction: 0.2    # submit the next task once this fraction of slots is free
+  # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
 ```
 
 !!! note "No CRAB output location"
@@ -73,12 +73,23 @@ crab:
 
 A production of tens of thousands of branches cannot be one CRAB task (a task holds at most a few
 thousand jobs). DSProd therefore keeps at most `crab.parallel_jobs` jobs in flight — 5000 by
-default — and submits the next CRAB task once `crab.refill_fraction` (default 0.2) of those slots
-is free. So a 43 000-branch production is simply launched as one `law run`; there is no need to
-chunk the branch range by hand. `--parallel-jobs <n>` on the command line overrides both.
+default — and submits the rest in waves. So a 43 000-branch production is simply launched as one
+`law run`; there is no need to chunk the branch range by hand. `--parallel-jobs <n>` on the command
+line overrides both settings.
 
-Without the refill threshold law would create a new CRAB task as soon as a single job finished,
-producing hundreds of one-job tasks.
+A wave becomes its own CRAB task only when it is worth one. `crab.refill_fraction` (default 0.2)
+sets that bar as a fraction of `parallel_jobs`: with the defaults, a wave needs **1000 jobs waiting
+and 1000 free slots**. Anything smaller waits and accumulates. Two cases are exempt and go out
+immediately:
+
+- **nothing is in flight** — the first wave of a production, and the tail, where there is nothing
+  left to accumulate with;
+- **`parallel_jobs` is unlimited** (`--parallel-jobs 0`), which restores law's own behaviour.
+
+This applies to retries as well as to jobs that have never been submitted: a job that fails while
+the production is still running is parked and picked up by the next eligible wave. Without the
+size bar, law creates a fresh CRAB task the moment a single job finishes or fails — a production
+of 3270 jobs with 226 early failures produced a second, 226-job CRAB task ten minutes in.
 
 ### Site selection
 
