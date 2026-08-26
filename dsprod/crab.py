@@ -78,12 +78,64 @@ def build_code_tarball(ana_path, out_path):
         "soft/vendor",
     ]
     present = [p for p in includes if os.path.exists(os.path.join(ana_path, p))]
-    subprocess.run(
-        ["tar", "-czf", out_path, "--exclude=__pycache__", "--exclude=.git", *present],
+
+    # Build next to the destination and rename, so a failed build never leaves a truncated
+    # tarball where the next submission (or `bootstrap.sh`, which globs `dsprod_code*.tar.gz`)
+    # would pick it up.
+    tmp_path = f"{out_path}.tmp"
+    proc = subprocess.run(
+        [
+            "tar",
+            "-czf",
+            tmp_path,
+            "--warning=no-file-changed",
+            "--exclude=__pycache__",
+            "--exclude=.git",
+            *present,
+        ],
         cwd=ana_path,
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    # GNU tar exits 1 when a file or directory changed while it was being read -- routine on an
+    # EOS-mounted production area, and harmless: the entry is still archived in full. Failing here
+    # aborts the submission of a whole production, so verify the archive instead of trusting the
+    # exit code. 2 and above are real errors.
+    if proc.returncode >= 2:
+        _remove_quietly(tmp_path)
+        raise RuntimeError(
+            f"could not build the CRAB code tarball (tar exit {proc.returncode}):\n"
+            f"{proc.stderr.strip()}"
+        )
+    try:
+        _verify_code_tarball(tmp_path, present)
+    except Exception:
+        _remove_quietly(tmp_path)
+        raise
+    os.replace(tmp_path, out_path)
     return out_path
+
+
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _verify_code_tarball(path, expected):
+    """Raise unless the archive is readable and holds every requested top-level entry."""
+    proc = subprocess.run(["tar", "-tzf", path], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"the CRAB code tarball {path} is not readable:\n{proc.stderr.strip()}"
+        )
+    top = {name.split("/", 1)[0] for name in proc.stdout.split("\n") if name}
+    missing = [e for e in expected if e.split("/", 1)[0] not in top]
+    if missing:
+        raise RuntimeError(
+            f"the CRAB code tarball {path} is incomplete, missing: {', '.join(missing)}"
+        )
 
 
 class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):

@@ -41,6 +41,11 @@ unpacked by `bootstrap.sh`; CMSSW is set up from cvmfs on the worker. DSProd own
 log I/O (products go to the production's storage area via the gfal-CLI interface), so CRAB's own
 stageout and log transfer are forced off.
 
+The tarball is built once per `law run` and checked before it is used: every top-level entry must
+be present and the archive readable. GNU tar's "file changed as we read it" warning — routine when
+the production area sits on EOS and harmless, since the entry is still archived in full — is
+tolerated rather than allowed to abort a submission of thousands of jobs.
+
 **Gridpacks are not part of that tarball** — the input sandbox is size-limited, and a ~30 MB
 gridpack per job would be wasteful anyway. A production job downloads the gridpack it needs from
 `fs_default`, where [`ImportGridpack` or `MakeGridpack`](tasks.md) put it. The `gridpacks/` store
