@@ -35,6 +35,7 @@ from .tools import (
     ResyncExistingBranchesProxy,
     on_batch_node,
     ps_call,
+    submitted_task_family,
     timed_call_wrapper,
     update_kerberos_ticket,
 )
@@ -501,15 +502,20 @@ class MakeGridpack(GridpackTask, HTCondorWorkflow, CrabWorkflow, law.LocalWorkfl
         }
 
     def run(self):
-        if on_batch_node():
-            # A worker reaches this only when the gridpack looked missing from `fs_default` --
-            # usually because the worker cannot talk to that storage, not because it is absent.
-            # Generating one here costs the production slot ~1.5 h of MadGraph and the upload then
-            # fails from the same worker for the same reason, so fail immediately instead.
+        # Generating on the grid is fine -- that is what submitting MakeGridpack does. What must
+        # not happen is a *production* job quietly building its own gridpack after finding it
+        # missing (often only because the worker cannot reach `fs_default`): that costs the
+        # production slot ~1.5 h of MadGraph and the upload then fails from the same worker.
+        # If the submitted task cannot be determined, allow it rather than block a legitimate run.
+        family = self.get_task_family().rsplit(".", 1)[-1]
+        submitted = submitted_task_family()
+        if on_batch_node() and submitted not in (None, family):
             raise RuntimeError(
-                f"gridpack '{self.process.gridpack_name(self.branch_data)}' is not readable from "
-                "fs_default on this worker, and a production job must not generate one. Check that "
-                "fs_default is reachable from the grid, and run MakeGridpack before submitting."
+                f"gridpack '{self.process.gridpack_name(self.branch_data)}' is missing or "
+                f"unreadable from fs_default, and this job was submitted to run {submitted}, not "
+                f"{family}: a production job must not build a gridpack on its own slot. Submit "
+                f"{family} itself -- it runs on the grid just as well -- or check that fs_default "
+                "is reachable from the worker, then resubmit."
             )
         self._generate(self.process.gridpack(self.branch_data))
 
