@@ -332,10 +332,19 @@ class Task(law.Task):
         return self.remote_target(self.storage_path(*parts))
 
     def law_job_home(self):
+        """Scratch directory for a task's intermediate files, and whether we own it.
+
+        A batch job gets the one law prepared. A local run uses local disk -- `$DSPROD_SCRATCH` if
+        set, else the system temp dir -- never `data/`: the production chain writes multi-GB
+        intermediates there, and when `data/` sits on an EOS mount a transient failure to open one
+        of them locally sends cmsRun to the xrootd fallback with a mangled path
+        ("Opening relative path '?tried=' is disallowed"), losing the whole chain at the last step.
+        """
         if "LAW_JOB_HOME" in os.environ:
             return os.environ["LAW_JOB_HOME"], False
-        os.makedirs(self.local_path(), exist_ok=True)
-        return tempfile.mkdtemp(dir=self.local_path()), True
+        base = os.environ.get("DSPROD_SCRATCH") or tempfile.gettempdir()
+        os.makedirs(base, exist_ok=True)
+        return tempfile.mkdtemp(dir=base), True
 
 
 class HTCondorWorkflowProxy(
