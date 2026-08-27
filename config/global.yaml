@@ -31,6 +31,6 @@ crab:
   max_memory_mb: 2500
   # Ceiling on the cores a CRAB job may request. It caps each task's own `n_cpus`, so a value
   # below it silently makes the job single-threaded on CRAB while HTCondor still gets `n_cpus`
-  # (`RunProd` asks for 4). Memory follows: the request is raised to `max_memory_mb_per_core`
+  # (`RunProd` asks for 2). Memory follows: the request is raised to `max_memory_mb_per_core`
   # (2500) per core, within CRAB's own limit of max(5000, 2500 * numCores) MB.
   max_cores: 4

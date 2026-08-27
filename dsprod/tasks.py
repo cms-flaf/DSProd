@@ -679,7 +679,10 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 24.0)
-    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
+    # 2 cores, i.e. 5000 MB on CRAB (2500 per core, which is also its cap for two cores). A
+    # single-threaded job of this chain peaked at 3042 MB across a 3270-job production -- above
+    # what a one-core slot offers -- while four cores would force a 10 GB request for no need.
+    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 2)
 
     def create_branch_map(self):
         return dict(enumerate(runprod_branches(self.prod_eras, self.prod_points)))
@@ -739,10 +742,18 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     work_dir,
                     gridpack=gridpack,
                     fragment_path=fragment,
+                    n_threads=int(self.n_cpus),
                 )
                 for version in self.nano_versions(era):
                     nano_out = run_step.run_nano(
-                        self.conditions, era, version, seed, n_evt, work_dir, miniaod
+                        self.conditions,
+                        era,
+                        version,
+                        seed,
+                        n_evt,
+                        work_dir,
+                        miniaod,
+                        n_threads=int(self.n_cpus),
                     )
                     with self.output()[version].localize("w") as out_local:
                         shutil.copy(nano_out, out_local.abspath)

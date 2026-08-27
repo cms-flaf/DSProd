@@ -24,7 +24,7 @@ and see the installed CMSSW releases under `soft/` directly. Relevant knobs (all
 so they do not change task identity):
 
 - `--max-runtime <hours>` (per-task defaults: MakeGridpack 12 h, RunProd 24 h, NanoMergeTask 3 h);
-- `--n-cpus <n>` (RunProd defaults to 4);
+- `--n-cpus <n>` (RunProd defaults to 2); cmsDriver runs its steps with that many threads;
 - `--krenew <hours>` — how often to renew the Kerberos ticket while polling.
 
 `--max-runtime` and `--n-cpus` are **per task**: each task keeps its own default and neither value

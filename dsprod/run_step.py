@@ -90,6 +90,7 @@ def build_cmsdriver(
     fileout=None,
     gridpack=None,
     fragment_rel=None,
+    n_threads=1,
 ):
     """Assemble the cmsDriver.py command line for one step."""
     out = fileout or f"{step}.root"
@@ -111,7 +112,10 @@ def build_cmsdriver(
     cmd += f" --datatier {step_params['datatier']} --fileout file:{out}"
     cmd += f" --conditions {step_params['GlobalTag']} --step {step_params['step']}"
     cmd += f" --geometry {step_params['geometry']} --era {step_params['era']}"
-    cmd += f" --mc -n {n_evt} --nThreads {step_params.get('nThreads', 1)}"
+    # the job's core allocation, unless the conditions pin a per-step value; cmsDriver
+    # derives numberOfStreams from it. A single-threaded cmsRun in a multi-core slot wastes
+    # the extra cores and does not get any faster.
+    cmd += f" --mc -n {n_evt} --nThreads {int(step_params.get('nThreads', n_threads))}"
     if "procModifiers" in step_params:
         cmd += f" --procModifiers {step_params['procModifiers']}"
     if filein is not None:
@@ -157,6 +161,7 @@ def run_step(
     fileout=None,
     gridpack=None,
     fragment_path=None,
+    n_threads=1,
     verbose=1,
 ):
     """Run one cmsDriver step in its CMSSW env, in work_dir."""
@@ -172,6 +177,7 @@ def run_step(
         fileout=fileout,
         gridpack=os.path.abspath(gridpack) if gridpack else None,
         fragment_rel=fragment_rel,
+        n_threads=n_threads,
     )
     cmd = f"{_cmsenv_prefix(step_params)} {driver}"
     ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
@@ -188,6 +194,7 @@ def run_chain(
     gridpack=None,
     fragment_path=None,
     previous_file=None,
+    n_threads=1,
     verbose=1,
 ):
     """Run the linear prod_steps[first_step..last_step] in work_dir, chaining outputs.
@@ -215,6 +222,7 @@ def run_chain(
             fileout=out,
             gridpack=gridpack,
             fragment_path=fragment_path,
+            n_threads=n_threads,
             verbose=verbose,
         )
         prev = out
@@ -222,7 +230,17 @@ def run_chain(
     return last_out
 
 
-def run_nano(conditions, era, version, seed, n_evt, work_dir, miniaod_file, verbose=1):
+def run_nano(
+    conditions,
+    era,
+    version,
+    seed,
+    n_evt,
+    work_dir,
+    miniaod_file,
+    n_threads=1,
+    verbose=1,
+):
     """Run the NANO step for one version off a shared MiniAOD; returns the output path."""
     params = resolve_step_params(conditions, era, "NANO", version=version)
     out = f"NANO_{version}.root"
@@ -234,6 +252,7 @@ def run_nano(conditions, era, version, seed, n_evt, work_dir, miniaod_file, verb
         n_evt,
         filein=os.path.basename(miniaod_file),
         fileout=out,
+        n_threads=n_threads,
         verbose=verbose,
     )
     return os.path.join(work_dir, out)

@@ -66,7 +66,9 @@ via `cmsDriver` steps (`dsprod/run_step.py`). Branches are enumerated by
 ```
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
-point). The proxy requirement is satisfied by the batch-delegated proxy
+point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (2 by default), so
+the job's core allocation is what cmsRun actually uses; a `nThreads` in the conditions overrides it
+per step. The proxy requirement is satisfied by the batch-delegated proxy
 inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). The number of seeds per point and era follows from
 `events_total[era] / events_per_job` — `events_total` is per era, so one setup covers all of them.
 
