@@ -136,6 +136,9 @@ def cmssw_releases_for_era(conditions, era):
                     conditions, era, "NANO", version=version
                 )
                 releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
+                # the merge may run in a different release (haddnano.py), which must be installed
+                m = run_step.merge_params(p)
+                releases.add((m["SCRAM_ARCH"], m["CMSSW"]))
         else:
             p = run_step.resolve_step_params(conditions, era, step)
             releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
@@ -837,7 +840,12 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     stack.enter_context(t.localize("r")).abspath for t in staged
                 ]
                 with self.output().localize("w") as out_local:
-                    run_step.hadd_nano(vparams, out_local.abspath, local_ins, work_dir)
+                    run_step.hadd_nano(
+                        run_step.merge_params(vparams),
+                        out_local.abspath,
+                        local_ins,
+                        work_dir,
+                    )
                     n_out = run_step.count_events(vparams, out_local.abspath, work_dir)
                     n_in = sum(
                         run_step.count_events(vparams, p, work_dir) for p in local_ins

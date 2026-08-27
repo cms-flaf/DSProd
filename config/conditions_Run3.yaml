@@ -66,6 +66,9 @@ Run3_2022:
       v12:
         SCRAM_ARCH: el8_amd64_gcc11
         CMSSW: CMSSW_13_0_13
+        # 13X has no haddnano.py; merge in the release this era already installs for v15
+        merge_CMSSW: CMSSW_15_0_15_patch4
+        merge_SCRAM_ARCH: el8_amd64_gcc12
         GlobalTag: 130X_mcRun3_2022_realistic_v5
         era: Run3
       v15:
@@ -95,6 +98,9 @@ Run3_2022EE:
       v12:
         SCRAM_ARCH: el8_amd64_gcc11
         CMSSW: CMSSW_13_0_13
+        # 13X has no haddnano.py; merge in the release this era already installs for v15
+        merge_CMSSW: CMSSW_15_0_15_patch4
+        merge_SCRAM_ARCH: el8_amd64_gcc12
         GlobalTag: 130X_mcRun3_2022_realistic_postEE_v6
         era: Run3
       v15:
@@ -129,6 +135,9 @@ Run3_2023:
     versions:
       v12:
         CMSSW: CMSSW_13_0_14
+        # 13X has no haddnano.py; merge in the release this era already installs for v15
+        merge_CMSSW: CMSSW_15_0_15_patch4
+        merge_SCRAM_ARCH: el8_amd64_gcc12
         GlobalTag: 130X_mcRun3_2023_realistic_v14
         era: Run3_2023
       v15:
@@ -163,6 +172,9 @@ Run3_2023BPix:
     versions:
       v12:
         CMSSW: CMSSW_13_0_14
+        # 13X has no haddnano.py; merge in the release this era already installs for v15
+        merge_CMSSW: CMSSW_15_0_15_patch4
+        merge_SCRAM_ARCH: el8_amd64_gcc12
         GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
         era: Run3_2023
       v15:
