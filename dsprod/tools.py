@@ -249,6 +249,23 @@ def get_voms_proxy_info():
     return info
 
 
+def on_batch_node():
+    """True inside a law remote job (HTCondor or CRAB); law exports LAW_JOB_HOME there."""
+    return bool(os.getenv("LAW_JOB_HOME"))
+
+
+def submitted_task_family():
+    """Family of the task this `law run` was launched for, or None if it cannot be determined.
+
+    Lets a task tell "I am what was submitted" from "I am a requirement of what was submitted" --
+    on a worker the two are otherwise indistinguishable. `law run <module>.<Class>` is resolved to
+    the plain family before luigi sees it (law/cli/run.py), so this returns e.g. "MakeGridpack".
+    """
+    parser = luigi.cmdline_parser.CmdlineParser.get_instance()
+    root = getattr(getattr(parser, "known_args", None), "root_task", None)
+    return str(root).rsplit(".", 1)[-1] if root else None
+
+
 class CreateVomsProxy(law.Task):
     time_limit = luigi.Parameter(default="24")
 
@@ -258,8 +275,7 @@ class CreateVomsProxy(law.Task):
 
     @property
     def on_batch_node(self):
-        """True inside a law remote job (HTCondor or CRAB); law exports LAW_JOB_HOME there."""
-        return bool(os.getenv("LAW_JOB_HOME"))
+        return on_batch_node()
 
     def complete(self):
         if not os.path.exists(self.proxy_path):
