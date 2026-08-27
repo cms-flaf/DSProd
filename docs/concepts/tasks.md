@@ -54,6 +54,14 @@ that is worth a batch backend (`--workflow htcondor|crab`).
     strips the `CMSSW_*`/`SCRAM`/`PYTHON*` variables from the generation subprocess, so gridpack
     generation works even on a CRAB worker (where `env.sh` sets up a cvmfs CMSSW for LAW itself).
 
+!!! warning "Never generated inside a production job"
+    `RunProd` requires `MakeGridpack`, so a worker that cannot read the gridpack from `fs_default`
+    would schedule it and spend the production slot on MadGraph — about 1.5 h — before failing to
+    upload the result from that same worker. `MakeGridpack` therefore refuses to run on a batch
+    node and says so immediately. Seeing that error means `fs_default` is unreachable from the
+    grid, not that the gridpack is missing.
+
+
 ### `RunProd`
 
 The core production task: a fused GEN→…→MiniAOD→NanoAOD chain for one `(era, point, seed)`, run

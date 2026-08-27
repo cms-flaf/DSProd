@@ -33,6 +33,7 @@ from .law_wlcg import WLCGFileSystem, WLCGFileTarget
 from .tools import (
     CreateVomsProxy,
     ResyncExistingBranchesProxy,
+    on_batch_node,
     ps_call,
     timed_call_wrapper,
     update_kerberos_ticket,
@@ -500,6 +501,16 @@ class MakeGridpack(GridpackTask, HTCondorWorkflow, CrabWorkflow, law.LocalWorkfl
         }
 
     def run(self):
+        if on_batch_node():
+            # A worker reaches this only when the gridpack looked missing from `fs_default` --
+            # usually because the worker cannot talk to that storage, not because it is absent.
+            # Generating one here costs the production slot ~1.5 h of MadGraph and the upload then
+            # fails from the same worker for the same reason, so fail immediately instead.
+            raise RuntimeError(
+                f"gridpack '{self.process.gridpack_name(self.branch_data)}' is not readable from "
+                "fs_default on this worker, and a production job must not generate one. Check that "
+                "fs_default is reachable from the grid, and run MakeGridpack before submitting."
+            )
         self._generate(self.process.gridpack(self.branch_data))
 
     def _generate(self, spec):

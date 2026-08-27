@@ -249,6 +249,11 @@ def get_voms_proxy_info():
     return info
 
 
+def on_batch_node():
+    """True inside a law remote job (HTCondor or CRAB); law exports LAW_JOB_HOME there."""
+    return bool(os.getenv("LAW_JOB_HOME"))
+
+
 class CreateVomsProxy(law.Task):
     time_limit = luigi.Parameter(default="24")
 
@@ -258,8 +263,7 @@ class CreateVomsProxy(law.Task):
 
     @property
     def on_batch_node(self):
-        """True inside a law remote job (HTCondor or CRAB); law exports LAW_JOB_HOME there."""
-        return bool(os.getenv("LAW_JOB_HOME"))
+        return on_batch_node()
 
     def complete(self):
         if not os.path.exists(self.proxy_path):
