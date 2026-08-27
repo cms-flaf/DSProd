@@ -134,6 +134,38 @@ waives it, which is not recommended with an open site pool.
     put a storage-only site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission with
     "not in the list of known CMS Processing Site Names".
 
+### Failing sites
+
+One broken worker node fails jobs in seconds, frees its slot and takes the next one, so it can eat
+a large share of a production before anyone notices — on 2026-08-27 a single host at one T2 failed
+258 jobs with `/usr/bin/base64: Input/output error`, before any physics ran.
+
+DSProd therefore keeps its own record of how jobs fare per site in
+`data/crab_site_stats.json` and quarantines a site that is clearly misbehaving. CRAB reports where
+each job ran, and since every wave is a new CRAB task, the next wave — retries included — is
+submitted without the quarantined sites. It is on by default; the thresholds live under
+`crab.auto_blacklist`:
+
+| key | default | meaning |
+|---|---|---|
+| `enabled` | `true` | `auto_blacklist: false` keeps only the static `blacklist` |
+| `min_failures` | 5 | failures needed before a site can be quarantined at all |
+| `min_failure_rate` | 0.5 | ... and the fraction of its jobs in the window that failed |
+| `relative_factor` | 2.0 | ... and how many times worse than the other sites it must be |
+| `min_baseline_jobs` | 20 | ... judged against at least this many jobs elsewhere |
+| `quarantine_hours` | 6 | how long it stays out; afterwards its record starts clean |
+| `window_hours` | 24 | outcomes older than this stop counting |
+| `max_sites` | 10 | never quarantine more than this many sites at once |
+
+The last four defaults are what keep this from making things worse. A site is only quarantined for
+being **worse than the others**, judged against a real baseline, so a bug of your own — which fails
+everywhere — blacklists nothing; a lone site is never quarantined, because there would be nowhere
+left to run; at most `max_sites` are held out at once; and every quarantine expires, after which the
+site starts from a clean record rather than staying condemned. Jobs already submitted keep going to
+the site they were assigned — CRAB cannot re-target a running task.
+
+A site you know is bad belongs in the static `blacklist` instead: that one is never lifted.
+
 !!! note "Why `env.sh` matters for CRAB"
     law runs `crab` inside a CMSSW sandbox of its own, and dumps that sandbox's environment with
     bare `python` — which modern CMSSW no longer ships, and for which the DSProd venv's `python`
