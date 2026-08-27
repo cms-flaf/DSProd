@@ -25,7 +25,7 @@ import os
 import re
 import subprocess
 import uuid
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 import law
 import luigi
@@ -476,6 +476,8 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         """Record the outcome of every job that reached a terminal state since the last poll.
 
         CRAB reports where a job ran in `SiteHistory`, which law stores as `extra.site_history`.
+        Jobs still in flight are counted too -- not as outcomes, but as part of what was sent to a
+        site, which is the denominator its failure rate is measured against.
         Each attempt is counted once: `job_data.attempts` has already been incremented by the time
         a job shows up as RETRY, and the ok flag separates a retry that then succeeded from the
         failure that preceded it.
@@ -484,12 +486,15 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         manager = proxy.job_manager
         terminal = (manager.FINISHED, manager.FAILED, manager.RETRY)
         stats = self.site_stats()
+        in_flight = Counter()
         for job_num, data in proxy.job_data.jobs.items():
             status = data.get("status")
-            if status not in terminal:
-                continue
             history = (data.get("extra") or {}).get("site_history") or []
             if not history:
+                continue
+            if status not in terminal:
+                # still pending or running: part of what was sent to the site, but no outcome yet
+                in_flight[history[-1]] += 1
                 continue
             ok = status == manager.FINISHED
             key = (job_num, proxy.job_data.attempts.get(job_num, 0), ok)
@@ -497,6 +502,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
                 continue
             self._site_stats_seen.add(key)
             stats.record(history[-1], ok)
+        stats.set_in_flight(in_flight)
         stats.save()
 
     def crab_job_file_factory_cls(self):

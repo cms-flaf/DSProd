@@ -150,12 +150,18 @@ submitted without the quarantined sites. It is on by default; the thresholds liv
 |---|---|---|
 | `enabled` | `true` | `auto_blacklist: false` keeps only the static `blacklist` |
 | `min_failures` | 5 | failures needed before a site can be quarantined at all |
-| `min_failure_rate` | 0.5 | ... and the fraction of its jobs in the window that failed |
+| `min_failure_rate` | 0.5 | ... and the fraction of the jobs *sent* there that failed |
 | `relative_factor` | 2.0 | ... and how many times worse than the other sites it must be |
 | `min_baseline_jobs` | 20 | ... judged against at least this many jobs elsewhere |
 | `quarantine_hours` | 6 | how long it stays out; afterwards its record starts clean |
 | `window_hours` | 24 | outcomes older than this stop counting |
 | `max_sites` | 10 | never quarantine more than this many sites at once |
+
+A site's failure rate counts every job **sent** there — the ones that already ended plus the ones
+still in flight. That distinction matters more than it looks: a job fails in seconds and succeeds in
+hours, so a rate computed over finished jobs alone reads as ~100 % at every site early in a
+production, no site stands out, and nothing is ever quarantined. Counting jobs in flight, the site
+that swallowed 335 of its 391 jobs sits at 0.86 while everyone else is between 0.007 and 0.08.
 
 The last four defaults are what keep this from making things worse. A site is only quarantined for
 being **worse than the others**, judged against a real baseline, so a bug of your own — which fails
