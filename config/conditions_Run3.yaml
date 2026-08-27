@@ -109,25 +109,33 @@ Run3_2023:
     SCRAM_ARCH: el8_amd64_gcc11
     CMSSW: CMSSW_13_0_14
     GlobalTag: 130X_mcRun3_2023_realistic_v14
+    # Run3Summer23 runs with the 2023 era, not the generic Run3 one that 2022 uses
+    era: Run3_2023
   LHEGS:
-    beamspot: Realistic25ns13p6TeVEarly2023Collision # VERIFY (Run3Summer23 GS beamspot)
+    beamspot: Realistic25ns13p6TeVEarly2023Collision
   DIGIPremixHLT:
     step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2023v12
+    # premix_stage2 only: Run3Summer23 dropped siPixelQualityRawToDigi, which 2022 still uses
+    procModifiers: premix_stage2
     pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer23_130X_mcRun3_2023_realistic_v13-v1/PREMIX"
+  RECO:
+    # Run3Summer23 RECO carries no procModifiers; with siPixelQualityRawToDigi every job dies on
+    # 'No data of type "SiPixelQuality" with label "forRawToDigi" in record SiPixelQualityFromDbRcd'
+    procModifiers: ""
   MINIAOD:
     GlobalTag: 130X_mcRun3_2023_realistic_v14
-    era: Run3,run3_miniAOD_12X # VERIFY (2023 MiniAOD era modifier)
+    era: Run3_2023 # matches Run3Summer23(BPix)MiniAODv4; run3_miniAOD_12X is a 2022 modifier (2023 MiniAOD era modifier)
   NANO:
     versions:
       v12:
         CMSSW: CMSSW_13_0_14
         GlobalTag: 130X_mcRun3_2023_realistic_v14
-        era: Run3
+        era: Run3_2023
       v15:
         SCRAM_ARCH: el8_amd64_gcc12
         CMSSW: CMSSW_15_0_15_patch4
         GlobalTag: 150X_mcRun3_2023_realistic_v1
-        era: Run3,run3_nanoAOD_pre142X
+        era: Run3_2023,run3_nanoAOD_pre142X
 
 Run3_2023BPix:
   prod_steps: [ LHEGS, DIGIPremixHLT, RECO, MINIAOD, NANO ]
@@ -135,25 +143,33 @@ Run3_2023BPix:
     SCRAM_ARCH: el8_amd64_gcc11
     CMSSW: CMSSW_13_0_14
     GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
+    # Run3Summer23 runs with the 2023 era, not the generic Run3 one that 2022 uses
+    era: Run3_2023
   LHEGS:
-    beamspot: Realistic25ns13p6TeVEarly2023Collision # VERIFY
+    beamspot: Realistic25ns13p6TeVEarly2023Collision
   DIGIPremixHLT:
     step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2023v12
+    # premix_stage2 only: Run3Summer23 dropped siPixelQualityRawToDigi, which 2022 still uses
+    procModifiers: premix_stage2
     pileup_input: "dbs:/Neutrino_E-10_gun/Run3Summer21PrePremix-Summer23BPix_130X_mcRun3_2023_realistic_postBPix_v1-v1/PREMIX"
+  RECO:
+    # Run3Summer23 RECO carries no procModifiers; with siPixelQualityRawToDigi every job dies on
+    # 'No data of type "SiPixelQuality" with label "forRawToDigi" in record SiPixelQualityFromDbRcd'
+    procModifiers: ""
   MINIAOD:
     GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
-    era: Run3,run3_miniAOD_12X # VERIFY
+    era: Run3_2023 # matches Run3Summer23(BPix)MiniAODv4; run3_miniAOD_12X is a 2022 modifier
   NANO:
     versions:
       v12:
         CMSSW: CMSSW_13_0_14
         GlobalTag: 130X_mcRun3_2023_realistic_postBPix_v2
-        era: Run3
+        era: Run3_2023
       v15:
         SCRAM_ARCH: el8_amd64_gcc12
         CMSSW: CMSSW_15_0_15_patch4
         GlobalTag: 150X_mcRun3_2023_realistic_postBPix_v1
-        era: Run3,run3_nanoAOD_pre142X
+        era: Run3_2023,run3_nanoAOD_pre142X
 
 Run3_2024:
   # v15-only (no v12 for 2024); MiniAOD is v6 on 15_0_2.

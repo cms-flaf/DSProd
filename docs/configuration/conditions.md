@@ -59,3 +59,11 @@ file is also the single source of truth for which releases a production needs.
     Values confirmed against a reachable McM chain are exact; those marked `# VERIFY` in the file
     are inferred by pattern and should be checked against that era's own McM chain before the first
     real production in the era.
+
+## Process modifiers
+
+`procModifiers` is usually set in `default_step`, which every era inherits. An era that must not
+carry it sets `procModifiers: ""` — an empty value is treated as "none" and the flag is left off the
+`cmsDriver` command entirely. Run3_2023 needs this: Run3Summer22 runs RECO with
+`siPixelQualityRawToDigi`, Run3Summer23 does not, and applying it there makes every job fail with
+`No data of type "SiPixelQuality" with label "forRawToDigi"`.

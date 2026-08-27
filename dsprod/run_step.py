@@ -116,7 +116,8 @@ def build_cmsdriver(
     # derives numberOfStreams from it. A single-threaded cmsRun in a multi-core slot wastes
     # the extra cores and does not get any faster.
     cmd += f" --mc -n {n_evt} --nThreads {int(step_params.get('nThreads', n_threads))}"
-    if "procModifiers" in step_params:
+    # empty means "none": an era can drop a modifier that `default_step` sets for the others
+    if step_params.get("procModifiers"):
         cmd += f" --procModifiers {step_params['procModifiers']}"
     if filein is not None:
         cmd += f" --filein file:{filein}"
