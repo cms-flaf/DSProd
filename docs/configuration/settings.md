@@ -62,13 +62,20 @@ it is described in [Architecture](../concepts/architecture.md#storage-layout).
 ```yaml
 crab:
   max_memory_mb: 2500
-  max_cores: 1
+  max_cores: 4
   # whitelist: [ T2_CH_CERN, ... ]  # optional; unset (default) = every tier T1_*/T2_*/T3_*
   # blacklist: [ ... ]              # optional; exclude misbehaving sites
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
   # parallel_jobs: 5000             # optional; jobs per CRAB task / in flight
   # refill_fraction: 0.2            # optional; min wave size, as a fraction of parallel_jobs
 ```
+
+!!! warning "`max_cores` caps every task's `n_cpus`"
+    A CRAB job gets `min(max_cores, <task>.n_cpus)` cores — so a `max_cores` below a task's own
+    `n_cpus` silently makes it single-threaded on CRAB while HTCondor still gives it `n_cpus`
+    (`RunProd` asks for 4). Memory follows the cores: the request is raised to
+    `max_memory_mb_per_core` (2500 by default) per core, within CRAB's own limit of
+    `max(5000, 2500 * numCores)` MB.
 
 The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),
 so there is no CRAB output location to configure. These can also be overridden per run on the

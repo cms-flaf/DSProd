@@ -29,4 +29,8 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #   refill_fraction: 0.2            min wave size / free slots, as a fraction of parallel_jobs
 crab:
   max_memory_mb: 2500
-  max_cores: 1
+  # Ceiling on the cores a CRAB job may request. It caps each task's own `n_cpus`, so a value
+  # below it silently makes the job single-threaded on CRAB while HTCondor still gets `n_cpus`
+  # (`RunProd` asks for 4). Memory follows: the request is raised to `max_memory_mb_per_core`
+  # (2500) per core, within CRAB's own limit of max(5000, 2500 * numCores) MB.
+  max_cores: 4

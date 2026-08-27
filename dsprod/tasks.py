@@ -349,6 +349,16 @@ class HTCondorWorkflowProxy(
 
 
 class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
+    # law copies parameter values from one task to another in `req()`, so a resource request would
+    # otherwise leak into everything a task requires. `NanoMergeTask` (3 h, 1 CPU) forced its
+    # `RunProd` requirement (24 h, 4 CPUs) to run in 3 h on a single core, and 91 % of a 3270-job
+    # CRAB task was killed on walltime. Workflow <-> branch conversion passes `_skip_task_excludes`,
+    # so a value given on the command line still reaches the branches of the task it was given for.
+    exclude_params_req = law.htcondor.HTCondorWorkflow.exclude_params_req | {
+        "max_runtime",
+        "n_cpus",
+    }
+
     max_runtime = law.DurationParameter(
         default=24.0,
         unit="h",
