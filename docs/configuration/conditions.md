@@ -67,3 +67,28 @@ carry it sets `procModifiers: ""` — an empty value is treated as "none" and th
 `cmsDriver` command entirely. Run3_2023 needs this: Run3Summer22 runs RECO with
 `siPixelQualityRawToDigi`, Run3Summer23 does not, and applying it there makes every job fail with
 `No data of type "SiPixelQuality" with label "forRawToDigi"`.
+
+## Checking against the central recipe
+
+DSProd reproduces central CMS production, so every `cmsDriver` argument it builds should match the
+corresponding central campaign. Nothing else catches a drift: a job runs for hours and then fails
+deep in the chain, or — worse — succeeds with the wrong configuration.
+
+```bash
+python run_tools/check_conditions.py            # every era
+python run_tools/check_conditions.py --era Run3_2024 --quiet
+```
+
+It reads each era's recipe from [McM]'s public REST API (no certificate needed) and compares
+`step`, `era`, `procModifiers` and `beamspot` — campaign-wide settings, where a difference is a bug.
+The GlobalTag, event content and data tier are reported as notes: central requests within one
+campaign legitimately differ there.
+
+Anything DSProd runs that has **no** central counterpart is listed under *not checked* rather than
+passed over — today that is the NanoAOD v15 fan-out for 2022–2023BPix, which has no central v15
+campaign. Silence about the unverified is what let the 2023 eras keep the Run3Summer22 recipe.
+
+The **Conditions check** workflow runs it on every pull request that touches the conditions, on
+pushes to `main`, and weekly — central campaigns are sometimes amended after they open.
+
+[McM]: https://cms-pdmv-prod.web.cern.ch/mcm/

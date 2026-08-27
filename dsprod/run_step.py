@@ -13,7 +13,9 @@ one NANO per version off the shared MiniAOD.
 
 import os
 
-from .tools import ps_call
+# `ps_call` is imported where it is used, not here: the conditions resolution and the cmsDriver
+# builder in this module are pure config logic, and run_tools/check_conditions.py exercises them
+# without a law installation.
 
 #: last-step name -> output file stem (for the staged per-seed file name)
 STEP_TO_STEM = {
@@ -180,6 +182,8 @@ def run_step(
         fragment_rel=fragment_rel,
         n_threads=n_threads,
     )
+    from .tools import ps_call
+
     cmd = f"{_cmsenv_prefix(step_params)} {driver}"
     ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
 
@@ -265,6 +269,8 @@ def hadd_nano(step_params, out_path, in_paths, work_dir, verbose=1):
     haddnano.py correctly sums the Runs tree (genEventCount/genEventSumw) needed for
     normalization, unlike a plain hadd.
     """
+    from .tools import ps_call
+
     args = " ".join([out_path] + list(in_paths))
     cmd = f"{_cmsenv_prefix(step_params)} haddnano.py {args}"
     ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
@@ -279,6 +285,8 @@ def count_events(step_params, path, work_dir, tree="Events"):
             "f = ROOT.TFile.Open(sys.argv[1])\n"
             f'print(int(f.Get("{tree}").GetEntries()))\n'
         )
+    from .tools import ps_call
+
     cmd = f"{_cmsenv_prefix(step_params)} python3 {script} {path}"
     _, out, _ = ps_call([cmd], shell=True, catch_stdout=True, verbose=0)
     return int(out.strip().splitlines()[-1])
