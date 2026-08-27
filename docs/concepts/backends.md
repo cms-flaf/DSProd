@@ -24,8 +24,13 @@ and see the installed CMSSW releases under `soft/` directly. Relevant knobs (all
 so they do not change task identity):
 
 - `--max-runtime <hours>` (per-task defaults: MakeGridpack 12 h, RunProd 24 h, NanoMergeTask 3 h);
-- `--n-cpus <n>` (RunProd defaults to 4);
+- `--n-cpus <n>` (RunProd defaults to 2); cmsDriver runs its steps with that many threads;
 - `--krenew <hours>` — how often to renew the Kerberos ticket while polling.
+
+`--max-runtime` and `--n-cpus` are **per task**: each task keeps its own default and neither value
+is passed on to the tasks it requires. Running `NanoMergeTask` therefore still gives its `RunProd`
+requirement 24 h and 4 CPUs, not the merge task's 3 h and 1 CPU. To change one, address the task by
+name — `--RunProd-max-runtime 36`.
 
 Jobs request AlmaLinux9 workers and write their HTCondor logs under `data/logs/`.
 
@@ -63,7 +68,7 @@ is likewise never shipped: importing from it is local by construction.
 ```yaml
 crab:
   max_memory_mb: 2500
-  max_cores: 1
+  max_cores: 4          # ceiling on a job's cores; caps each task's own n_cpus
   # parallel_jobs: 5000     # jobs per CRAB task / in flight
   # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
 ```
