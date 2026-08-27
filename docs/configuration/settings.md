@@ -68,6 +68,7 @@ crab:
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
   # parallel_jobs: 5000             # optional; jobs per CRAB task / in flight
   # refill_fraction: 0.2            # optional; min wave size, as a fraction of parallel_jobs
+  # auto_blacklist: { ... }         # optional; see Backends -> Failing sites (on by default)
 ```
 
 !!! warning "`max_cores` caps every task's `n_cpus`"

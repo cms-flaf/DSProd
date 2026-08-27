@@ -31,6 +31,7 @@ import law
 import luigi
 from law.job.base import JobInputFile
 
+from .site_stats import SiteStats
 from .tools import (
     ResyncExistingBranchesProxy,
     timed_call_wrapper,
@@ -338,6 +339,10 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     #: code tarball shipped to the workers, built once per law process (see _code_tarball)
     _code_tarball_path = None
 
+    #: rolling per-site job statistics, and the (job_num, attempt, ok) keys already counted
+    _site_stats_obj = None
+    _site_stats_seen = None
+
     crab_memory = luigi.IntParameter(
         default=-1,
         significant=False,
@@ -454,7 +459,45 @@ class CrabWorkflow(law.cms.CrabWorkflow):
                 else (lambda: None)
             )
         self._crab_kerberos_update()
+        self._collect_site_stats()
         return True
+
+    def site_stats(self):
+        """Rolling per-site job record, kept in the production area across runs."""
+        if self._site_stats_obj is None:
+            self._site_stats_obj = SiteStats(
+                os.path.join(self.ana_data_path(), "crab_site_stats.json"),
+                self._crab_cfg().get("auto_blacklist"),
+            )
+            self._site_stats_seen = set()
+        return self._site_stats_obj
+
+    def _collect_site_stats(self):
+        """Record the outcome of every job that reached a terminal state since the last poll.
+
+        CRAB reports where a job ran in `SiteHistory`, which law stores as `extra.site_history`.
+        Each attempt is counted once: `job_data.attempts` has already been incremented by the time
+        a job shows up as RETRY, and the ok flag separates a retry that then succeeded from the
+        failure that preceded it.
+        """
+        proxy = self.workflow_proxy
+        manager = proxy.job_manager
+        terminal = (manager.FINISHED, manager.FAILED, manager.RETRY)
+        stats = self.site_stats()
+        for job_num, data in proxy.job_data.jobs.items():
+            status = data.get("status")
+            if status not in terminal:
+                continue
+            history = (data.get("extra") or {}).get("site_history") or []
+            if not history:
+                continue
+            ok = status == manager.FINISHED
+            key = (job_num, proxy.job_data.attempts.get(job_num, 0), ok)
+            if key in self._site_stats_seen:
+                continue
+            self._site_stats_seen.add(key)
+            stats.record(history[-1], ok)
+        stats.save()
 
     def crab_job_file_factory_cls(self):
         return DSProdCrabJobFileFactory
@@ -532,6 +575,17 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         # pool. Do NOT auto-whitelist the *storage* site either: it may not be a processing site
         # (e.g. T3_CH_CERNBOX) and CRAB then refuses the task ("not in the list of known CMS
         # Processing Site Names").
+        # sites quarantined by their recent failure record; every wave is a new CRAB task, so
+        # this takes effect for the next one -- retries included
+        quarantined = [s for s in self.site_stats().blacklist() if s not in blacklist]
+        if quarantined:
+            self.publish_message(
+                "keeping {} site(s) out of this CRAB task after recent failures: {}".format(
+                    len(quarantined), ", ".join(quarantined)
+                )
+            )
+            blacklist = list(blacklist) + quarantined
+
         config.crab.Site.whitelist = [str(s) for s in whitelist or _CRAB_ALL_SITES]
         if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]

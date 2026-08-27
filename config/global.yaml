@@ -27,6 +27,15 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #   ignore_global_blacklist: true   waive CMS's known-broken-site list (not recommended)
 #   parallel_jobs: 5000             jobs per CRAB task and in flight (--parallel-jobs wins)
 #   refill_fraction: 0.2            min wave size / free slots, as a fraction of parallel_jobs
+#   auto_blacklist:                 quarantine sites whose recent jobs mostly fail (on by default;
+#     enabled: true                 set `auto_blacklist: false` to keep only the static blacklist)
+#     min_failures: 5               failures needed before a site can be quarantined at all
+#     min_failure_rate: 0.5         ... and the fraction of its jobs in the window that failed
+#     relative_factor: 2.0          ... and how much worse than the other sites it must be
+#     min_baseline_jobs: 20         ... judged against at least this many jobs elsewhere
+#     quarantine_hours: 6           how long it stays out; afterwards its record starts clean
+#     window_hours: 24              outcomes older than this stop counting
+#     max_sites: 10                 never quarantine more than this many sites at once
 crab:
   max_memory_mb: 2500
   # Ceiling on the cores a CRAB job may request. It caps each task's own `n_cpus`, so a value
