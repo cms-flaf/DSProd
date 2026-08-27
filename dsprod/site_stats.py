@@ -7,20 +7,38 @@ blacklist only per *site* and only at submission time, so DSProd keeps its own r
 production area and quarantines a site whose recent jobs mostly fail. Since every wave is a new
 CRAB task, the next wave -- retries included -- is submitted without it.
 
+A site's failure rate is measured against every job *sent* there -- the ones that already ended
+plus the ones still in flight. Counting only finished jobs is what a first version did, and it does
+not work: a job fails in seconds and succeeds in hours, so early in a production every site's
+finished set is ~100 % failures, no site looks worse than the others, and nothing is ever
+quarantined (observed with 335/391 failures at one site and 0.7-8 % everywhere else).
+
 Configured under `crab.auto_blacklist` in the merged global config; see `DEFAULTS`.
 """
 
 import json
 import os
+import re
 import time
 
 #: `crab.auto_blacklist` settings and their defaults
+#: CMS site names, e.g. T1_DE_KIT, T2_UK_London_IC. CRAB reports "Unknown" when it does not know
+#: where a job ran; feeding that back as a blacklist entry would be meaningless at best and could
+#: have the client reject the whole submission.
+_SITE_RE = re.compile(r"^T\d_[A-Za-z0-9_]+$")
+
+
+def is_site(name):
+    """Whether `name` is a CMS site name rather than a placeholder such as "Unknown"."""
+    return bool(name and _SITE_RE.match(str(name)))
+
+
 DEFAULTS = {
     # set false to keep only the statically configured `crab.blacklist`
     "enabled": True,
     # a site needs at least this many failures before it can be quarantined at all
     "min_failures": 5,
-    # ... and at least this fraction of its jobs in the window must have failed
+    # ... and at least this fraction of the jobs sent there (ended + in flight) must have failed
     "min_failure_rate": 0.5,
     # ... and it must be failing this many times more often than the other sites, so a bug of our
     # own -- which fails everywhere -- cannot blacklist every site that runs it
@@ -55,6 +73,8 @@ class SiteStats:
         self.path = path
         self.cfg = resolve_config(cfg)
         self.sites = {}
+        #: jobs currently pending or running per site; part of the denominator, never persisted
+        self.in_flight = {}
         self._dirty = False
         self.load()
 
@@ -76,7 +96,8 @@ class SiteStats:
                     "quarantined_until": float(rec.get("quarantined_until") or 0.0),
                 }
                 for name, rec in sites.items()
-                if isinstance(rec, dict)
+                # a state file written before placeholders were filtered may hold "Unknown"
+                if isinstance(rec, dict) and is_site(name)
             }
 
     def save(self):
@@ -91,16 +112,21 @@ class SiteStats:
 
     # -- recording --------------------------------------------------------------------------
 
+    def set_in_flight(self, counts):
+        """Jobs still pending or running per site, as of the latest poll."""
+        self.in_flight = {s: n for s, n in (counts or {}).items() if is_site(s)}
+
     def record(self, site, ok, now=None):
         """Note one finished (`ok=True`) or failed job at `site`."""
-        if not site:
+        if not is_site(site):
             return
         now = time.time() if now is None else now
         rec = self.sites.setdefault(site, {"events": [], "quarantined_until": 0.0})
         rec["events"].append((float(now), int(bool(ok))))
         self._dirty = True
         self._prune(now)
-        self._quarantine(now)
+        # judging happens in `blacklist()`, once the caller has also reported what is still in
+        # flight -- doing it here would use a stale, usually empty, denominator
 
     # -- blacklisting -----------------------------------------------------------------------
 
@@ -109,23 +135,25 @@ class SiteStats:
         if not self.cfg["enabled"]:
             return []
         now = time.time() if now is None else now
+        self._prune(now)
         self._expire(now)
+        # re-judge here as well: the in-flight counts move between polls even when nothing new fails
+        self._quarantine(now)
         active = [
             (name, rec)
             for name, rec in self.sites.items()
             if rec["quarantined_until"] > now
         ]
         # most failures first, so the cap keeps the worst offenders
-        active.sort(key=lambda item: -self._counts(item[1])[1])
+        active.sort(key=lambda item: -self._counts(item[0], item[1])[1])
         return [name for name, _ in active[: int(self.cfg["max_sites"])]]
 
     # -- internals --------------------------------------------------------------------------
 
-    @staticmethod
-    def _counts(rec):
-        n = len(rec["events"])
+    def _counts(self, site, rec):
+        """(jobs sent to `site`, failures among them): ended jobs plus the ones still in flight."""
         n_fail = sum(1 for _, ok in rec["events"] if not ok)
-        return n, n_fail
+        return len(rec["events"]) + self.in_flight.get(site, 0), n_fail
 
     def _prune(self, now):
         cutoff = now - float(self.cfg["window_hours"]) * 3600.0
@@ -153,7 +181,7 @@ class SiteStats:
         for name, rec in self.sites.items():
             if name == site:
                 continue
-            a, b = self._counts(rec)
+            a, b = self._counts(name, rec)
             n += a
             n_fail += b
         return n, ((n_fail / n) if n else 0.0)
@@ -162,7 +190,7 @@ class SiteStats:
         for site, rec in self.sites.items():
             if rec["quarantined_until"] > now:
                 continue
-            n, n_fail = self._counts(rec)
+            n, n_fail = self._counts(site, rec)
             if not n or n_fail < int(self.cfg["min_failures"]):
                 continue
             rate = n_fail / n
