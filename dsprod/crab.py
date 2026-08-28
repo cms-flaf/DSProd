@@ -20,10 +20,14 @@ backend. Only the compute knobs are configurable, in the merged global config
       # refill_fraction: 0.2     # min wave size / free slots, as a fraction of parallel_jobs
 """
 
+import fnmatch
+import json
 import math
 import os
 import re
 import subprocess
+import time
+import urllib.request
 import uuid
 from collections import Counter, OrderedDict
 
@@ -190,6 +194,85 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
             new_lines.append(ln)
         with open(job_file, "w") as f:
             f.writelines(new_lines)
+
+
+#: CRIC's site table — the same source CRAB validates a whitelist against
+_CRIC_URL = "https://cms-cric.cern.ch/api/cms/site/query/?json"
+
+#: how long a cached site list is reused before CRIC is asked again
+_CRIC_CACHE_SECONDS = 24 * 3600
+
+
+def processing_sites(cache_path=None, url=_CRIC_URL, timeout=60):
+    """CMS site names that actually run jobs, newest-first from CRIC, cached on disk.
+
+    `/cvmfs/cms.cern.ch/SITECONF` cannot be used for this: it also lists storage endpoints such as
+    `T1_US_FNAL_Disk` and `T3_CH_CERNBOX`, and a whitelist naming one gets the task refused --
+    "A site name T1_US_FNAL_Disk that user specified is not in the list of known CMS Processing
+    Site Names". CRIC marks the difference: a site that runs jobs has `computeunits`.
+    """
+    if cache_path and os.path.exists(cache_path):
+        if time.time() - os.path.getmtime(cache_path) < _CRIC_CACHE_SECONDS:
+            try:
+                with open(cache_path) as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                pass
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            payload = json.load(response)
+    except Exception as exc:
+        if cache_path and os.path.exists(cache_path):
+            with open(cache_path) as f:  # stale is better than nothing
+                return json.load(f)
+        raise RuntimeError(f"could not read the CMS site list from {url}: {exc}")
+    entries = payload.values() if isinstance(payload, dict) else payload
+    sites = sorted(
+        e["name"] for e in entries if e.get("name") and e.get("computeunits")
+    )
+    if cache_path:
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w") as f:
+                json.dump(sites, f)
+        except OSError:
+            pass
+    return sites
+
+
+def resolve_whitelist(whitelist, blacklist, sites):
+    """A `Site.whitelist` from which `blacklist` is actually absent.
+
+    CRAB gives the whitelist precedence: a site matched by both is *kept*, and it says so only in a
+    warning ("Since the whitelist has precedence, these sites are not considered in the blacklist").
+    With the default all-tier globs that silently defeats every exclusion -- the configured
+    `crab.blacklist` and the automatic site quarantine alike.
+
+    So a tier glob covering an excluded site is expanded, from `sites`, into the sites it actually
+    matches minus the excluded ones. Globs covering nothing excluded are left alone, which keeps the
+    pool wide and the expansion small: excluding one T2 lists the T2s and leaves `T1_*` and `T3_*`
+    as they are.
+    """
+    if not blacklist:
+        return list(whitelist)
+    out = []
+    for entry in whitelist:
+        hit = [b for b in blacklist if fnmatch.fnmatch(b, entry)]
+        if not hit:
+            out.append(entry)
+            continue
+        # an entry that is itself excluded simply disappears
+        out += [
+            site
+            for site in sites
+            if fnmatch.fnmatch(site, entry) and site not in blacklist
+        ]
+    if not out:
+        raise RuntimeError(
+            f"the blacklist {', '.join(blacklist)} excludes every site the whitelist "
+            f"{', '.join(whitelist)} allows"
+        )
+    return out
 
 
 _CrabProxyBase = law.cms.CrabWorkflow.workflow_proxy_cls
@@ -450,7 +533,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         if self._crab_kerberos_update is None:
 
             def renew_kerberos_ticket():
-                update_kerberos_ticket(verbose=0)
+                # verbose: a silent renewal leaves no way to tell, after a credential failure,
+                # whether it had been running at all
+                update_kerberos_ticket(verbose=1)
 
             krenew = float(getattr(self, "krenew", 1) or 0)
             self._crab_kerberos_update = (
@@ -592,7 +677,12 @@ class CrabWorkflow(law.cms.CrabWorkflow):
             )
             blacklist = list(blacklist) + quarantined
 
-        config.crab.Site.whitelist = [str(s) for s in whitelist or _CRAB_ALL_SITES]
+        sites = resolve_whitelist(
+            whitelist or _CRAB_ALL_SITES,
+            blacklist,
+            processing_sites(os.path.join(self.ana_data_path(), "cms_sites.json")),
+        )
+        config.crab.Site.whitelist = [str(s) for s in sites]
         if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]
         # Keep CMS's global blacklist of known-broken sites in force unless explicitly waived:
