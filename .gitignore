@@ -12,3 +12,6 @@ __pycache__/
 
 # user-specific config (see docs/configuration/settings.md)
 /config/user_custom.yaml
+
+# crab drops one wherever it runs; the wrapper keeps it in $DSPROD_CRAB_HOME, this catches strays
+crab.log

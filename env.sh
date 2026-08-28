@@ -166,7 +166,16 @@ export HOME="${DSPROD_CRAB_HOME:-${TMPDIR:-/tmp}/dsprod_crab_home_$(id -u)}"
 mkdir -p "$HOME" || exit 1
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
-exec /cvmfs/cms.cern.ch/common/crab "$@"
+# crab drops a crab.log wherever it is run from, which for law's status and kill calls is the
+# production area. Run it from its own home instead. law submits with a *relative* `--config` and
+# cwd set to the job-file directory, so make that path absolute before leaving the directory.
+_args=(); _prev=""
+for _a in "$@"; do
+  case "$_prev" in --config|-c) case "$_a" in /*) ;; *) _a="$PWD/$_a" ;; esac ;; esac
+  _args+=("$_a"); _prev="$_a"
+done
+cd "$HOME" || exit 1
+exec /cvmfs/cms.cern.ch/common/crab "${_args[@]}"
 CRABWRAP
   chmod +x "$ANALYSIS_PATH/soft/bin/crab"
   # law.contrib.cms's CMSSW sandbox runs bare `python` to dump its environment, but modern CMSSW
