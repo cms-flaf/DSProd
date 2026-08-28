@@ -136,6 +136,9 @@ def cmssw_releases_for_era(conditions, era):
                     conditions, era, "NANO", version=version
                 )
                 releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
+                # the merge may run in a different release (haddnano.py), which must be installed
+                m = run_step.merge_params(p)
+                releases.add((m["SCRAM_ARCH"], m["CMSSW"]))
         else:
             p = run_step.resolve_step_params(conditions, era, step)
             releases.add((p["SCRAM_ARCH"], p["CMSSW"]))
@@ -179,6 +182,8 @@ class Task(law.Task):
             Task.process = registry.get_process(Task.prod_setup["process"])
             Task.all_points = Task.process.enumerate_points(Task.prod_setup)
             Task.setup_path = setup_path
+            if self.test == 0:
+                self._validate_merge_granularity()
         if setup_path != Task.setup_path:
             raise RuntimeError(
                 f"Inconsistent setup path: {setup_path} != {Task.setup_path}"
@@ -192,6 +197,34 @@ class Task(law.Task):
         self.prod_points = self._select_points(Task.all_points)
         _, setup_full_name = os.path.split(setup_path)
         self.setup_name, _ = os.path.splitext(setup_full_name)
+
+    def _validate_merge_granularity(self):
+        """Refuse a setup whose samples would not fill whole merged files.
+
+        `NanoMergeTask` groups `files_per_merge` production files into one product, so a sample is
+        delivered as `events_total / (events_per_job * files_per_merge)` files. When that does not
+        divide, the last group is short and the sample becomes N full files plus a stub -- which
+        makes a later top-up production awkward to reason about, since "how many more files do I
+        need" no longer has a whole-number answer. Checked on the setup itself, so any task refuses
+        it, not only the merge. `--test` is exempt: it deliberately produces a single short job.
+        """
+        per_file = int(self.prod_setup["events_per_job"]) * int(
+            self.prod_setup.get("files_per_merge", 20)
+        )
+        bad = [
+            f"{point.name} / {era}: {n} events"
+            for point in Task.all_points
+            for era, n in sorted(point.events_total.items())
+            if n and n % per_file
+        ]
+        if bad:
+            shown = "\n  ".join(bad[:8])
+            more = f"\n  ... and {len(bad) - 8} more" if len(bad) > 8 else ""
+            raise RuntimeError(
+                f"{self.setup}: events_total must be a multiple of events_per_job x "
+                f"files_per_merge ({per_file}), otherwise the last merged file of a sample is "
+                f"incomplete:\n  {shown}{more}"
+            )
 
     def _select_points(self, points):
         """Apply `--points`, the era selection and `--test`.
@@ -329,10 +362,19 @@ class Task(law.Task):
         return self.remote_target(self.storage_path(*parts))
 
     def law_job_home(self):
+        """Scratch directory for a task's intermediate files, and whether we own it.
+
+        A batch job gets the one law prepared. A local run uses local disk -- `$DSPROD_SCRATCH` if
+        set, else the system temp dir -- never `data/`: the production chain writes multi-GB
+        intermediates there, and when `data/` sits on an EOS mount a transient failure to open one
+        of them locally sends cmsRun to the xrootd fallback with a mangled path
+        ("Opening relative path '?tried=' is disallowed"), losing the whole chain at the last step.
+        """
         if "LAW_JOB_HOME" in os.environ:
             return os.environ["LAW_JOB_HOME"], False
-        os.makedirs(self.local_path(), exist_ok=True)
-        return tempfile.mkdtemp(dir=self.local_path()), True
+        base = os.environ.get("DSPROD_SCRATCH") or tempfile.gettempdir()
+        os.makedirs(base, exist_ok=True)
+        return tempfile.mkdtemp(dir=base), True
 
 
 class HTCondorWorkflowProxy(
@@ -837,7 +879,12 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     stack.enter_context(t.localize("r")).abspath for t in staged
                 ]
                 with self.output().localize("w") as out_local:
-                    run_step.hadd_nano(vparams, out_local.abspath, local_ins, work_dir)
+                    run_step.hadd_nano(
+                        run_step.merge_params(vparams),
+                        out_local.abspath,
+                        local_ins,
+                        work_dir,
+                    )
                     n_out = run_step.count_events(vparams, out_local.abspath, work_dir)
                     n_in = sum(
                         run_step.count_events(vparams, p, work_dir) for p in local_ins

@@ -263,17 +263,43 @@ def run_nano(
     return os.path.join(work_dir, out)
 
 
+def merge_params(step_params):
+    """Params of the release that merges this NanoAOD version.
+
+    `haddnano.py` ships in the release binaries only from CMSSW 15X on; the 13X releases that make
+    NanoAOD v12 do not have it at all, so such a version names one that does via `merge_CMSSW`
+    (`merge_SCRAM_ARCH` if its architecture differs too). Everything else is unchanged, and a
+    version whose own release provides the script needs no override.
+    """
+    if not step_params.get("merge_CMSSW"):
+        return step_params
+    params = dict(step_params)
+    params["CMSSW"] = step_params["merge_CMSSW"]
+    if step_params.get("merge_SCRAM_ARCH"):
+        params["SCRAM_ARCH"] = step_params["merge_SCRAM_ARCH"]
+    return params
+
+
 def hadd_nano(step_params, out_path, in_paths, work_dir, verbose=1):
     """Merge NanoAOD files with haddnano.py in the nano version's CMSSW env.
 
     haddnano.py correctly sums the Runs tree (genEventCount/genEventSumw) needed for
     normalization, unlike a plain hadd.
     """
-    from .tools import ps_call
+    from .tools import PsCallError, ps_call
 
     args = " ".join([out_path] + list(in_paths))
     cmd = f"{_cmsenv_prefix(step_params)} haddnano.py {args}"
-    ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
+    try:
+        ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
+    except PsCallError as exc:
+        if exc.return_code == 127:  # command not found
+            raise RuntimeError(
+                f"haddnano.py is not available in {step_params['CMSSW']}: it ships in the release "
+                "binaries only from CMSSW 15X on. Point this NanoAOD version at a release that "
+                "has it with `merge_CMSSW` (and `merge_SCRAM_ARCH`) in the conditions."
+            ) from exc
+        raise
 
 
 def count_events(step_params, path, work_dir, tree="Events"):
