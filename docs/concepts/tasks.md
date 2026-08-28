@@ -67,6 +67,25 @@ that is worth a batch backend (`--workflow htcondor|crab`).
     unreachable from the worker.
 
 
+### `PremixFileList`
+
+Resolves an era's premix pileup dataset to a plain file list on `fs_default`
+(`<output>/premix/<era>.txt`), once, and `RunProd` passes it to `cmsDriver` as
+`--pileup_input filelist:...`.
+
+Without it, `--pileup_input dbs:<dataset>` makes **every job** resolve that dataset — ~38 000 files
+— with its own DAS query. At a few thousand concurrent jobs the queries start returning nothing,
+cmsDriver then writes a config with no secondary input, and cmsRun dies on
+
+```
+NoSecondaryFiles: RootEmbeddedFileSequence no input files specified for secondary input source
+```
+
+*after* the job has already produced its GEN-SIM. A 5000-job production lost 10 % of its jobs that
+way. The list is identical to what a successful DAS query returns, so nothing about the physics
+changes; it is stored in the production area (not `<output>_test`) because it depends only on the
+era, and a batch node refuses to build one — that query belongs on the submitting machine.
+
 ### `RunProd`
 
 The core production task: a fused GEN→…→MiniAOD→NanoAOD chain for one `(era, point, seed)`, run
