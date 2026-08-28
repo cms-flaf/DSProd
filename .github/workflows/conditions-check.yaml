@@ -1,0 +1,33 @@
+name: Conditions check
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "config/conditions_Run3.yaml"
+      - "dsprod/run_step.py"
+      - "run_tools/check_conditions.py"
+      - ".github/workflows/conditions-check.yaml"
+  pull_request:
+    paths:
+      - "config/conditions_Run3.yaml"
+      - "dsprod/run_step.py"
+      - "run_tools/check_conditions.py"
+      - ".github/workflows/conditions-check.yaml"
+  # central campaigns get amended after they open, so re-check even when nothing here changed
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  conditions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Compare every era and step with its central McM recipe
+        run: python run_tools/check_conditions.py

@@ -178,21 +178,22 @@ Run3_2024:
     SCRAM_ARCH: el8_amd64_gcc12
     CMSSW: CMSSW_14_0_18
     GlobalTag: 140X_mcRun3_2024_realistic_v26
+    era: Run3_2024
   LHEGS:
-    beamspot: Realistic2024Collision # VERIFY (Run3Summer24 GS beamspot)
+    beamspot: DBrealistic
   DIGIPremixHLT:
     step: DIGI,DATAMIX,L1,DIGI2RAW,HLT:2024v14
-    era: Run3_2024
+    # premix_stage2 only, as in RunIII2024Summer24DRPremix
+    procModifiers: premix_stage2
     pileup_input: "dbs:/Neutrino_E-10_gun/RunIIISummer24PrePremix-Premixlib2024_140X_mcRun3_2024_realistic_v26-v1/PREMIX"
   RECO:
-    era: Run3_2024
+    # RunIII2024Summer24 RECO carries no procModifiers
+    procModifiers: ""
   MINIAOD:
     CMSSW: CMSSW_15_0_2
     GlobalTag: 150X_mcRun3_2024_realistic_v2
-    era: Run3_2024
   NANO:
     versions:
       v15:
         CMSSW: CMSSW_15_0_2
         GlobalTag: 150X_mcRun3_2024_realistic_v2
-        era: Run3_2024
