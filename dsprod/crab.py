@@ -20,6 +20,7 @@ backend. Only the compute knobs are configurable, in the merged global config
       # refill_fraction: 0.2     # min wave size / free slots, as a fraction of parallel_jobs
 """
 
+import fnmatch
 import math
 import os
 import re
@@ -190,6 +191,59 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
             new_lines.append(ln)
         with open(job_file, "w") as f:
             f.writelines(new_lines)
+
+
+#: CMS site names, from cvmfs — no network, and present wherever CRAB runs
+_SITECONF = "/cvmfs/cms.cern.ch/SITECONF"
+
+
+def known_sites():
+    """Every CMS site name cvmfs knows about."""
+    try:
+        return sorted(
+            n for n in os.listdir(_SITECONF) if re.match(r"^T\d_[A-Za-z0-9_]+$", n)
+        )
+    except OSError:
+        return []
+
+
+def resolve_whitelist(whitelist, blacklist):
+    """A `Site.whitelist` from which `blacklist` is actually absent.
+
+    CRAB gives the whitelist precedence: a site matched by both is *kept*, and it says so only in a
+    warning ("Since the whitelist has precedence, these sites are not considered in the blacklist").
+    With the default all-tier globs that silently defeats every exclusion -- the configured
+    `crab.blacklist` and the automatic site quarantine alike.
+
+    So a tier glob covering an excluded site is expanded, from the cvmfs site list, into the sites
+    it actually matches minus the excluded ones. Globs covering nothing excluded are left alone,
+    which keeps the pool wide and the expansion small: excluding one T2 lists the T2s and leaves
+    `T1_*` and `T3_*` as they are. The storage site is dropped as well -- it need not be a
+    processing site, and CRAB refuses a task whose whitelist names one.
+    """
+    if not blacklist:
+        return list(whitelist)
+    sites = known_sites()
+    out = []
+    for entry in whitelist:
+        hit = [b for b in blacklist if fnmatch.fnmatch(b, entry)]
+        if not hit:
+            out.append(entry)
+            continue
+        if not sites:
+            raise RuntimeError(
+                f"cannot exclude {', '.join(hit)}: they are covered by the whitelist entry "
+                f"'{entry}', and CRAB keeps a site that appears in both. Expanding it needs the "
+                f"site list at {_SITECONF}, which is not readable. Set `crab.whitelist` explicitly."
+            )
+        out += [
+            site
+            for site in sites
+            if fnmatch.fnmatch(site, entry)
+            and site not in blacklist
+            and site != _CRAB_DUMMY_SITE
+        ]
+    return out
 
 
 _CrabProxyBase = law.cms.CrabWorkflow.workflow_proxy_cls
@@ -594,7 +648,8 @@ class CrabWorkflow(law.cms.CrabWorkflow):
             )
             blacklist = list(blacklist) + quarantined
 
-        config.crab.Site.whitelist = [str(s) for s in whitelist or _CRAB_ALL_SITES]
+        sites = resolve_whitelist(whitelist or _CRAB_ALL_SITES, blacklist)
+        config.crab.Site.whitelist = [str(s) for s in sites]
         if blacklist:
             config.crab.Site.blacklist = [str(s) for s in blacklist]
         # Keep CMS's global blacklist of known-broken sites in force unless explicitly waived:
