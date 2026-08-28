@@ -172,6 +172,18 @@ the site they were assigned — CRAB cannot re-target a running task.
 
 A site you know is bad belongs in the static `blacklist` instead: that one is never lifted.
 
+!!! note "An unreadable status response does not stop the production"
+    `crab status` occasionally returns output with no `Status on the CRAB server` line, and law
+    treats that as a query error — one per *job* of the task, because a group query maps a single
+    failure onto every job in it (4763 in one production poll). law then skips the rest of that poll
+    entirely: no status line, no resubmission, and any other task's good data discarded with it.
+
+    DSProd retries such a response three times, 15 s apart. If it still cannot be read, the task's
+    jobs are reported as **pending** — what law itself does for a freshly submitted task with no
+    per-job information yet — and the fact is printed once for the task instead of once per job. A
+    task whose status stays unreadable for ten consecutive polls does raise: a production that
+    quietly stalls is worse than one that stops.
+
 !!! note "CRAB does not write to your AFS home"
     CRAB rewrites its task cache `~/.crab3` on *every* command, status queries included. With
     `$HOME` on AFS that makes a long production depend on an AFS token: when the token lapses,

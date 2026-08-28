@@ -143,6 +143,70 @@ def _verify_code_tarball(path, expected):
         )
 
 
+class DSProdCrabJobManager(law.cms.CrabJobManager):
+    """CRAB job manager that rides out a status response it cannot read.
+
+    `crab status` occasionally returns output with no "Status on the CRAB server" line at all. law
+    then raises, and because `query_group` maps a group failure onto every job of the task, one such
+    response became **4763 identical errors** in a single production poll. Worse, law `continue`s the
+    whole poll iteration on any query error: no status line, no resubmission, and the other task's
+    perfectly good data discarded with it -- and `poll_fails` consecutive occurrences kill the
+    workflow.
+
+    The condition is transient, so the query is simply retried. If it still cannot be read, the
+    task's jobs are reported as pending -- what law itself does when a freshly submitted task has no
+    per-job information yet -- and the fact is published once, for the task, instead of once per job.
+    A task that stays unreadable for `max_unreadable_polls` consecutive polls does raise: a
+    production that quietly stalls is worse than one that stops.
+    """
+
+    #: attempts, and the pause between them, before a status response is given up on
+    query_retries = 3
+    query_retry_delay = 15.0
+
+    #: consecutive unreadable polls of one task that are tolerated before raising
+    max_unreadable_polls = 10
+
+    def __init__(self, *args, **kwargs):
+        super(DSProdCrabJobManager, self).__init__(*args, **kwargs)
+        #: proj_dir -> number of consecutive polls whose response could not be read
+        self._unreadable = {}
+
+    def query(self, proj_dir, job_ids=None, *args, **kwargs):
+        proj_dir = str(proj_dir)
+        last_error = None
+        for attempt in range(self.query_retries + 1):
+            try:
+                result = super(DSProdCrabJobManager, self).query(
+                    proj_dir, job_ids=job_ids, *args, **kwargs
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.query_retries:
+                    time.sleep(self.query_retry_delay)
+                continue
+            self._unreadable.pop(proj_dir, None)
+            return result
+
+        n = self._unreadable.get(proj_dir, 0) + 1
+        self._unreadable[proj_dir] = n
+        if n > self.max_unreadable_polls:
+            raise Exception(
+                f"the status of {os.path.basename(proj_dir)} has been unreadable for {n} "
+                f"consecutive polls; last error: {last_error}"
+            )
+        print(
+            f"could not read the status of {os.path.basename(proj_dir)} "
+            f"({n}/{self.max_unreadable_polls} consecutive), keeping its jobs pending: {last_error}"
+        )
+        if job_ids is None:
+            job_ids = self._job_ids_from_proj_dir(proj_dir)
+        return {
+            job_id: self.job_status_dict(job_id=job_id, status=self.PENDING)
+            for job_id in job_ids
+        }
+
+
 class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
     """CRAB job file with no CRAB-side product/log transfer (DSProd owns remote I/O)."""
 
@@ -589,6 +653,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
             stats.record(history[-1], ok)
         stats.set_in_flight(in_flight)
         stats.save()
+
+    def crab_job_manager_cls(self):
+        return DSProdCrabJobManager
 
     def crab_job_file_factory_cls(self):
         return DSProdCrabJobFileFactory
