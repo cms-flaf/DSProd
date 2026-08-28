@@ -182,6 +182,8 @@ class Task(law.Task):
             Task.process = registry.get_process(Task.prod_setup["process"])
             Task.all_points = Task.process.enumerate_points(Task.prod_setup)
             Task.setup_path = setup_path
+            if self.test == 0:
+                self._validate_merge_granularity()
         if setup_path != Task.setup_path:
             raise RuntimeError(
                 f"Inconsistent setup path: {setup_path} != {Task.setup_path}"
@@ -195,6 +197,34 @@ class Task(law.Task):
         self.prod_points = self._select_points(Task.all_points)
         _, setup_full_name = os.path.split(setup_path)
         self.setup_name, _ = os.path.splitext(setup_full_name)
+
+    def _validate_merge_granularity(self):
+        """Refuse a setup whose samples would not fill whole merged files.
+
+        `NanoMergeTask` groups `files_per_merge` production files into one product, so a sample is
+        delivered as `events_total / (events_per_job * files_per_merge)` files. When that does not
+        divide, the last group is short and the sample becomes N full files plus a stub -- which
+        makes a later top-up production awkward to reason about, since "how many more files do I
+        need" no longer has a whole-number answer. Checked on the setup itself, so any task refuses
+        it, not only the merge. `--test` is exempt: it deliberately produces a single short job.
+        """
+        per_file = int(self.prod_setup["events_per_job"]) * int(
+            self.prod_setup.get("files_per_merge", 20)
+        )
+        bad = [
+            f"{point.name} / {era}: {n} events"
+            for point in Task.all_points
+            for era, n in sorted(point.events_total.items())
+            if n and n % per_file
+        ]
+        if bad:
+            shown = "\n  ".join(bad[:8])
+            more = f"\n  ... and {len(bad) - 8} more" if len(bad) > 8 else ""
+            raise RuntimeError(
+                f"{self.setup}: events_total must be a multiple of events_per_job x "
+                f"files_per_merge ({per_file}), otherwise the last merged file of a sample is "
+                f"incomplete:\n  {shown}{more}"
+            )
 
     def _select_points(self, points):
         """Apply `--points`, the era selection and `--test`.

@@ -62,6 +62,13 @@ points:
 | `first_step` / `last_step` | Bound the CMSSW chain `RunProd` runs. |
 | `events_per_job` | Events per `RunProd` seed (seeds per point and era = `ceil(events_total[era] / events_per_job)`). |
 | `files_per_merge` | How many per-seed nanos `NanoMergeTask` groups into one output. |
+
+!!! warning "`events_total` must fill whole merged files"
+    A sample is delivered as `events_total / (events_per_job * files_per_merge)` files, and DSProd
+    refuses a setup where that does not divide — otherwise the last group of a point is short and
+    the sample is N full files plus a stub, which makes a later top-up production awkward: "how
+    many more files do I need" stops having a whole-number answer. Round `events_total` **up** to a
+    multiple of the product. `--test` is exempt, since it deliberately runs a single short job.
 | `points` | The physics points; their exact shape is defined by the process. `events_total` is **per era** — a mapping `{era: n}`, or a scalar to use the same number everywhere. |
 
 There is **no `gridpack:` field** and **no `crab:` block** — see below.
