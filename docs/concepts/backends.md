@@ -172,6 +172,20 @@ the site they were assigned — CRAB cannot re-target a running task.
 
 A site you know is bad belongs in the static `blacklist` instead: that one is never lifted.
 
+!!! note "CRAB does not write to your AFS home"
+    CRAB rewrites its task cache `~/.crab3` on *every* command, status queries included. With
+    `$HOME` on AFS that makes a long production depend on an AFS token: when the token lapses,
+    every status query fails at once with
+    `PermissionError: [Errno 13] Permission denied: '/afs/.../.crab3.<pid>'` and law reports it as
+    a status-query failure for all jobs. The `crab` wrapper `env.sh` installs therefore points
+    `HOME` at `$DSPROD_CRAB_HOME` (default: a per-user directory under `$TMPDIR`), so nothing in a
+    production run needs AFS. law passes `--proxy` to submit, status and kill, so CRAB never needs
+    `~/.globus` from the real home either.
+
+    DSProd still renews Kerberos and the AFS token (`kinit -R` + `aklog`, hourly, from
+    `crab_poll_callback`) — but renewal can only extend a ticket that is still valid, so it is not
+    a substitute for keeping the production off AFS.
+
 !!! note "Why `env.sh` matters for CRAB"
     law runs `crab` inside a CMSSW sandbox of its own, and dumps that sandbox's environment with
     bare `python` — which modern CMSSW no longer ships, and for which the DSProd venv's `python`

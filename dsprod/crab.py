@@ -450,7 +450,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         if self._crab_kerberos_update is None:
 
             def renew_kerberos_ticket():
-                update_kerberos_ticket(verbose=0)
+                # verbose: a silent renewal leaves no way to tell, after a credential failure,
+                # whether it had been running at all
+                update_kerberos_ticket(verbose=1)
 
             krenew = float(getattr(self, "krenew", 1) or 0)
             self._crab_kerberos_update = (

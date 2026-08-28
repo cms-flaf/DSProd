@@ -156,6 +156,14 @@ action() {
   cat > "$ANALYSIS_PATH/soft/bin/crab" <<'CRABWRAP'
 #!/bin/bash
 source /cvmfs/cms.cern.ch/cmsset_default.sh
+# CRAB rewrites its task cache ~/.crab3 (via ~/.crab3.<pid>) on *every* command, status queries
+# included -- so with $HOME on AFS a long production dies the moment the AFS token lapses:
+#   PermissionError: [Errno 13] Permission denied: '/afs/cern.ch/user/x/xyz/.crab3.<pid>'
+# and law reports it as a status-query failure for every job at once. DSProd keeps everything else
+# off AFS, so give CRAB a home of its own too. law passes --proxy to submit/status/kill, so it
+# never needs ~/.globus from the real home.
+export HOME="${DSPROD_CRAB_HOME:-${TMPDIR:-/tmp}/dsprod_crab_home_$(id -u)}"
+mkdir -p "$HOME" || exit 1
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
 exec /cvmfs/cms.cern.ch/common/crab "$@"
