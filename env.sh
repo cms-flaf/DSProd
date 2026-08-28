@@ -166,16 +166,17 @@ export HOME="${DSPROD_CRAB_HOME:-${TMPDIR:-/tmp}/dsprod_crab_home_$(id -u)}"
 mkdir -p "$HOME" || exit 1
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
-# crab drops a crab.log wherever it is run from, which for law's status and kill calls is the
-# production area. Run it from its own home instead. law submits with a *relative* `--config` and
-# cwd set to the job-file directory, so make that path absolute before leaving the directory.
-_args=(); _prev=""
-for _a in "$@"; do
-  case "$_prev" in --config|-c) case "$_a" in /*) ;; *) _a="$PWD/$_a" ;; esac ;; esac
-  _args+=("$_a"); _prev="$_a"
-done
-cd "$HOME" || exit 1
-exec /cvmfs/cms.cern.ch/common/crab "${_args[@]}"
+# crab drops a crab.log wherever it is run from, and law calls status/kill without setting a
+# directory, so they inherited the caller's cwd -- the production area. Run those from crab's own
+# home. `submit` must keep its directory: law runs it with cwd set to the job-file directory and
+# the generated config names `scriptExe` and `inputFiles` relative to it, which CRAB resolves
+# against the cwd ("Cannot find the file crab_wrapper_*.sh specified in the JobType.scriptExe
+# configuration parameter"). Its log then stays next to the job files, under data/jobs/.
+case "$1" in
+  submit) ;;
+  *) cd "$HOME" || exit 1 ;;
+esac
+exec /cvmfs/cms.cern.ch/common/crab "$@"
 CRABWRAP
   chmod +x "$ANALYSIS_PATH/soft/bin/crab"
   # law.contrib.cms's CMSSW sandbox runs bare `python` to dump its environment, but modern CMSSW
