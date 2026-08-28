@@ -172,6 +172,31 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         #: proj_dir -> number of consecutive polls whose response could not be read
         self._unreadable = {}
 
+    @classmethod
+    def parse_query_output(cls, out, proj_dir, job_ids, skip_transfers=False):
+        """Parse a status response, and say what it looked like when that fails.
+
+        law's error names the server status it ended up with ("but got 'None'") but never the
+        output it read, so an unreadable response cannot be diagnosed after the fact. Attach the
+        head of it -- the status lines live in the first few lines, and the per-job JSON that
+        follows is megabytes, so a slice is enough.
+        """
+        try:
+            return super(DSProdCrabJobManager, cls).parse_query_output(
+                out, proj_dir, job_ids, skip_transfers=skip_transfers
+            )
+        except Exception as exc:
+            head = [
+                line[:200]
+                for line in (out or "").replace("\r", "").split("\n")[:12]
+                if not line.startswith("{")
+            ]
+            shown = "\n      ".join(head) or "<no output>"
+            raise Exception(
+                f"{exc}\n    first lines of what crab returned ({len(out or '')} bytes):"
+                f"\n      {shown}"
+            )
+
     def query(self, proj_dir, job_ids=None, *args, **kwargs):
         proj_dir = str(proj_dir)
         last_error = None
