@@ -93,6 +93,7 @@ def build_cmsdriver(
     gridpack=None,
     fragment_rel=None,
     n_threads=1,
+    pileup_filelist=None,
 ):
     """Assemble the cmsDriver.py command line for one step."""
     out = fileout or f"{step}.root"
@@ -118,6 +119,10 @@ def build_cmsdriver(
     # derives numberOfStreams from it. A single-threaded cmsRun in a multi-core slot wastes
     # the extra cores and does not get any faster.
     cmd += f" --mc -n {n_evt} --nThreads {int(step_params.get('nThreads', n_threads))}"
+    pileup = step_params.get("pileup_input")
+    if pileup and pileup_filelist and str(pileup).startswith(("dbs:", "das:")):
+        # resolved once by PremixFileList instead of by a DAS query in every job
+        pileup = f"filelist:{pileup_filelist}"
     # empty means "none": an era can drop a modifier that `default_step` sets for the others
     if step_params.get("procModifiers"):
         cmd += f" --procModifiers {step_params['procModifiers']}"
@@ -127,8 +132,8 @@ def build_cmsdriver(
         cmd += f" --datamix {step_params['datamix']}"
     if "pileup" in step_params:
         cmd += f" --pileup {step_params['pileup']}"
-    if "pileup_input" in step_params:
-        cmd += f" --pileup_input \"{step_params['pileup_input']}\""
+    if pileup:
+        cmd += f' --pileup_input "{pileup}"' ""
     cmd += "".join(f" --customise {x}" for x in step_params.get("customise", []))
     customise_commands += step_params.get("customise_commands", [])
     # match central compression on the persisted (final) tier
@@ -165,6 +170,7 @@ def run_step(
     gridpack=None,
     fragment_path=None,
     n_threads=1,
+    pileup_filelist=None,
     verbose=1,
 ):
     """Run one cmsDriver step in its CMSSW env, in work_dir."""
@@ -181,6 +187,7 @@ def run_step(
         gridpack=os.path.abspath(gridpack) if gridpack else None,
         fragment_rel=fragment_rel,
         n_threads=n_threads,
+        pileup_filelist=pileup_filelist,
     )
     from .tools import ps_call
 
@@ -200,6 +207,7 @@ def run_chain(
     fragment_path=None,
     previous_file=None,
     n_threads=1,
+    pileup_filelist=None,
     verbose=1,
 ):
     """Run the linear prod_steps[first_step..last_step] in work_dir, chaining outputs.
@@ -228,6 +236,7 @@ def run_chain(
             gridpack=gridpack,
             fragment_path=fragment_path,
             n_threads=n_threads,
+            pileup_filelist=pileup_filelist,
             verbose=verbose,
         )
         prev = out

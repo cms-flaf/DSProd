@@ -126,6 +126,16 @@ def runprod_branches(eras, points):
     return out
 
 
+def premix_dataset_for_era(conditions, era):
+    """The `dbs:` pileup dataset an era's steps resolve, or None when it has no premix step."""
+    for step in conditions[era]["prod_steps"]:
+        params = run_step.resolve_step_params(conditions, era, step)
+        pileup = str(params.get("pileup_input") or "")
+        if pileup.startswith("dbs:") or pileup.startswith("das:"):
+            return pileup[4:]
+    return None
+
+
 def cmssw_releases_for_era(conditions, era):
     """Sorted unique (SCRAM_ARCH, CMSSW) needed to produce `era` (all prod_steps + NANO versions)."""
     releases = set()
@@ -345,6 +355,13 @@ class Task(law.Task):
     def storage_path(self, *parts):
         """Path of a product relative to `fs_default`: <storage name>/<parts...>."""
         return os.path.join(self.storage_name(), *parts)
+
+    def premix_target(self, era):
+        """Where an era's premix file list lives on `fs_default`.
+
+        Always the production area, also under `--test`: the list depends only on the era.
+        """
+        return self.remote_target(self.prod_storage_name(), "premix", f"{era}.txt")
 
     def gridpack_target(self, gridpack_name):
         """Where a gridpack lives on `fs_default`.
@@ -734,6 +751,61 @@ Exact code it was produced with:
         )
 
 
+class PremixFileList(Task, law.LocalWorkflow):
+    """Resolve an era's premix pileup dataset to a file list, once, and store it on `fs_default`.
+
+    `cmsDriver --pileup_input dbs:<dataset>` resolves the dataset with a DAS query *in the job*.
+    That dataset holds ~38 000 files, and a production asks every job to look it up: at a few
+    thousand concurrent jobs the queries start coming back empty, cmsDriver writes a config with no
+    secondary input, and cmsRun dies with
+
+        NoSecondaryFiles: RootEmbeddedFileSequence no input files specified for secondary input
+
+    after the job has already produced its GEN-SIM. Resolving once here and passing the result as
+    `filelist:` gives every job exactly what a successful DAS query would have, with no per-job
+    lookup. Always local: a worker is the last place that query should run.
+    """
+
+    def create_branch_map(self):
+        eras = [
+            era
+            for era in self.prod_eras
+            if premix_dataset_for_era(self.conditions, era)
+        ]
+        return dict(enumerate(eras))
+
+    def output(self):
+        return self.premix_target(self.branch_data)
+
+    def run(self):
+        era = self.branch_data
+        dataset = premix_dataset_for_era(self.conditions, era)
+        family = self.get_task_family().rsplit(".", 1)[-1]
+        if on_batch_node() and submitted_task_family() not in (None, family):
+            raise RuntimeError(
+                f"the premix file list for {era} is missing from fs_default, and resolving it "
+                f"needs a DAS query that must not run on a worker. Submit {family} (or any task "
+                "that requires it) from a machine with dasgoclient, then resubmit."
+            )
+        _, out, _ = ps_call(
+            [f'dasgoclient -query="file dataset={dataset}"'],
+            shell=True,
+            catch_stdout=True,
+            verbose=1,
+        )
+        files = [
+            line.strip() for line in out.splitlines() if line.strip().endswith(".root")
+        ]
+        if not files:
+            raise RuntimeError(
+                f"DAS returned no files for the premix dataset {dataset}"
+            )
+        print(f"PremixFileList[{era}]: {len(files)} files from {dataset}")
+        with self.output().localize("w") as out_local:
+            with open(out_local.abspath, "w") as f:
+                f.write("\n".join(files) + "\n")
+
+
 class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
 
@@ -747,11 +819,14 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         return dict(enumerate(runprod_branches(self.prod_eras, self.prod_points)))
 
     def workflow_requires(self):
-        return {
+        reqs = {
             "voms": CreateVomsProxy.req(self),
             "cmssw": InstallCMSSW.req(self, workflow="local"),
             "gridpack": MakeGridpack.req(self),
         }
+        if PremixFileList.req(self, workflow="local").get_branch_map():
+            reqs["premix"] = PremixFileList.req(self, workflow="local")
+        return reqs
 
     def requires(self):
         era, pi, _ = self.branch_data
@@ -759,13 +834,20 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         gp_branch = self.gridpack_index()[
             self.process.gridpack_name(self.prod_points[pi])
         ]
-        return {
+        reqs = {
             "voms": CreateVomsProxy.req(self),
             "cmssw": InstallCMSSW.req(
                 self, branch=self.prod_eras.index(era), workflow="local"
             ),
             "gridpack": MakeGridpack.req(self, branch=gp_branch),
         }
+        premix = PremixFileList.req(self, workflow="local")
+        eras_with_premix = list(premix.get_branch_map().values())
+        if era in eras_with_premix:
+            reqs["premix"] = PremixFileList.req(
+                self, branch=eras_with_premix.index(era), workflow="local"
+            )
+        return reqs
 
     def _staged_target(self, era, point, version, seed):
         name = self.process.point_name(point)
@@ -790,6 +872,10 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                 self.input()["gridpack"].localize("r")
             ).abspath
             work_dir, is_tmp = self.law_job_home()
+            premix = self.input().get("premix")
+            premix_list = (
+                stack.enter_context(premix.localize("r")).abspath if premix else None
+            )
             try:
                 miniaod = run_step.run_chain(
                     self.conditions,
@@ -802,6 +888,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     gridpack=gridpack,
                     fragment_path=fragment,
                     n_threads=int(self.n_cpus),
+                    pileup_filelist=premix_list,
                 )
                 for version in self.nano_versions(era):
                     nano_out = run_step.run_nano(
