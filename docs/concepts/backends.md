@@ -34,6 +34,29 @@ name — `--RunProd-max-runtime 36`.
 
 Jobs request AlmaLinux9 workers and write their HTCondor logs under `data/logs/`.
 
+## Resuming a production (both batch backends)
+
+When a run picks up an existing submission, law re-checks the outputs of every job it had recorded
+as finished and retries the ones whose outputs are missing (`initially missing task outputs`). For
+a few files deleted by hand that is exactly what you want. For a whole production it is not, so a
+check that condemns more than 10 % of the workflow stops the run instead, without submitting
+anything:
+
+```
+8299 of 8300 jobs recorded as finished no longer have their outputs, so this run would
+regenerate most of the sample. Nothing was submitted.
+```
+
+What to look at, in order:
+
+1. **Were the outputs consumed downstream?** `NanoMergeTask` deletes each nano file it merges, and
+   the [`produced/` records](tasks.md#runprod) are what marks those seeds done. Check that the
+   records exist — for a production that predates them, run `BackfillProducedRecords`.
+2. **Was the storage reachable?** A listing that fails looks the same from here. Run again once it
+   is back.
+3. **Do you actually want the work redone?** Delete the workflow's submission file under
+   `data/jobs/` and start again — a run with nothing to resume never performs this check.
+
 ## `crab`
 
 Submits to the WLCG grid via [CRAB](https://twiki.cern.ch/twiki/bin/view/CMSPublic/SWGuideCrab),

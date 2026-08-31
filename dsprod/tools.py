@@ -214,6 +214,57 @@ class ResyncExistingBranchesProxy:
         return super(ResyncExistingBranchesProxy, self).run()
 
 
+class StopOnMassInitialRetryProxy:
+    """Remote-workflow-proxy mixin: refuse to regenerate a production whose outputs are gone.
+
+    When a run picks up an existing submission, law re-checks the outputs of every job it had
+    recorded as finished and retries the ones whose outputs are missing ("initially missing task
+    outputs", `law/workflow/remote.py`). For a few files deleted by hand that is exactly right.
+    For a production whose intermediates are consumed downstream it is a catastrophe: one restart
+    resubmitted all 8300 `RunProd` jobs of an era, because `NanoMergeTask` had merged their nano
+    files and deleted them, as it is meant to.
+
+    The `produced/` records now keep that from happening (see `Task.produced_nano_target`), but a
+    storage outage during the check looks identical from here, so a check that condemns most of
+    the workflow stops the run rather than acting on it.
+    """
+
+    #: share of a resumed workflow's jobs that may be retried for missing outputs in one go
+    max_initial_retry_fraction = 0.1
+
+    #: law's error for a job it recorded as finished whose outputs are no longer there
+    missing_outputs_error = "initially missing task outputs"
+
+    def submit(self, retry_jobs=None):
+        self.stop_on_mass_initial_retry(retry_jobs)
+        return super(StopOnMassInitialRetryProxy, self).submit(retry_jobs)
+
+    def stop_on_mass_initial_retry(self, retry_jobs):
+        """Raise instead of resubmitting, when most of a resumed workflow lost its outputs."""
+        if not retry_jobs or not self._submitted:
+            return
+        n_missing = sum(
+            1
+            for job_num in retry_jobs
+            if (self.job_data.jobs.get(job_num) or {}).get("error")
+            == self.missing_outputs_error
+        )
+        n_jobs = len(self.job_data)
+        if n_missing < 2 or n_missing <= self.max_initial_retry_fraction * n_jobs:
+            return
+        raise Exception(
+            f"{n_missing} of {n_jobs} jobs recorded as finished no longer have their outputs, "
+            "so this run would regenerate most of the sample. Nothing was submitted.\n"
+            "  - if the outputs were consumed downstream (NanoMergeTask deletes each nano file "
+            "it merges), those seeds are done and their `produced/` records are what says so -- "
+            "check that the records exist before doing anything else;\n"
+            "  - if the storage was unreachable while the outputs were checked, run again once "
+            "it is back;\n"
+            "  - to redo the work deliberately, delete this workflow's submission file under "
+            "data/jobs/ and start again."
+        )
+
+
 def timed_call_wrapper(fn, update_interval, verbose=0):
     last_update = None
 
