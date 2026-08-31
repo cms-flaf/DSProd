@@ -203,6 +203,18 @@ PYSHIM
     export CMSSW_BASE="${dsprod_cmssw%/}"
   fi
 
+  # law resolves a task name through the index it cached in .law/index, so a task added since
+  # then is invisible and `law run` says only "task family '<name>' not found in index" -- a
+  # confusing way to learn that the index is a cache. Refresh it whenever the task modules are
+  # newer, which costs nothing on a normal source.
+  if [ -f "$ANALYSIS_PATH/config/law.cfg" ]; then
+    local law_index="$LAW_HOME/index"
+    if [ ! -f "$law_index" ] || [ -n "$(find "$ANALYSIS_PATH/dsprod" -name '*.py' -newer "$law_index" -print -quit 2>/dev/null)" ]; then
+      echo "Refreshing the law task index ..."
+      law index --quiet 2>/dev/null || echo "WARNING: could not refresh the law task index"
+    fi
+  fi
+
   # Convenience: run a command inside DEFAULT_CMSSW_BASE (set per-step by the tasks in Phase 3).
   alias cmsEnv="env -i HOME=$HOME ANALYSIS_PATH=$ANALYSIS_PATH X509_USER_PROXY=$X509_USER_PROXY DEFAULT_CMSSW_BASE=\$DEFAULT_CMSSW_BASE KRB5CCNAME=$KRB5CCNAME $ANALYSIS_PATH/dsprod/cmsEnv.sh"
 
