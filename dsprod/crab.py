@@ -38,11 +38,29 @@ from law.job.base import JobInputFile
 from .site_stats import SiteStats
 from .tools import (
     ResyncExistingBranchesProxy,
+    StopOnMassInitialRetryProxy,
     timed_call_wrapper,
     update_kerberos_ticket,
 )
 
 law.contrib.load("cms")
+
+
+# law builds the paths of the files it ships with every CRAB submission -- the job wrapper and
+# its PSet -- as `rel_path(__file__, ...)`, and `law.util.rel_path` strips the file name from the
+# anchor only when `os.path.exists()` confirms it is a file. Our software tree lives on EOS, and
+# one transient stat failure there was enough: `rel_path` treated `law/contrib/cms/job.py` as a
+# *directory*, and the submission died copying `.../job.py/crab/crab_wrapper.sh`, taking a
+# multi-day production with it. A module file is never a directory, whether or not storage answers
+# right now, so anchor resolution must not depend on a stat succeeding.
+def _strict_rel_path(anchor, *paths):
+    anchor = os.path.abspath(os.path.expandvars(os.path.expanduser(str(anchor))))
+    if anchor.endswith(".py") or os.path.isfile(anchor):
+        anchor = os.path.dirname(anchor)
+    return os.path.normpath(os.path.join(anchor, *map(str, paths)))
+
+
+law.contrib.cms.job.rel_path = _strict_rel_path
 
 #: site CRAB is told to stage out to. Never actually written to (stageout is disabled), but the
 #: submit-time check requires a site the user can write to; CERNBOX is the CERN-account default.
@@ -235,7 +253,37 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
 class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
     """CRAB job file with no CRAB-side product/log transfer (DSProd owns remote I/O)."""
 
+    #: files law copies out of its own tree into every submission
+    law_sources = ("crab/crab_wrapper.sh", "crab/PSet.py")
+
+    #: attempts, and the pause between them, before the software tree is given up on
+    source_retries = 5
+    source_retry_delay = 3.0
+
+    @classmethod
+    def _wait_for_law_sources(cls):
+        """Fail with the actual reason when law's own tree cannot be read.
+
+        With the software on EOS a submission can hit a moment when it is not there, and the
+        error that surfaces then is a copy of a path that never existed. Waiting for the tree
+        turns a transient outage into a delay, and a real one into a message that names it.
+        """
+        base = os.path.dirname(os.path.abspath(law.contrib.cms.job.__file__))
+        for rel in cls.law_sources:
+            path = os.path.join(base, rel)
+            for attempt in range(cls.source_retries + 1):
+                if os.path.isfile(path):
+                    break
+                if attempt < cls.source_retries:
+                    time.sleep(cls.source_retry_delay)
+            else:
+                raise RuntimeError(
+                    f"{path} is not readable, so no CRAB job file can be built. law's own "
+                    "tree is unreachable -- if it sits on EOS, the mount is likely down."
+                )
+
     def create(self, **kwargs):
+        self._wait_for_law_sources()
         kwargs = dict(kwargs)
         kwargs["output_files"] = []
         job_file, c = super().create(**kwargs)
@@ -383,7 +431,9 @@ def _cli_has_parallel_jobs():
     return False
 
 
-class DSProdCrabWorkflowProxy(ResyncExistingBranchesProxy, _CrabProxyBase):
+class DSProdCrabWorkflowProxy(
+    ResyncExistingBranchesProxy, StopOnMassInitialRetryProxy, _CrabProxyBase
+):
     def __init__(self, *args, **kwargs):
         super(DSProdCrabWorkflowProxy, self).__init__(*args, **kwargs)
         self._apply_crab_parallel_jobs()
@@ -445,6 +495,9 @@ class DSProdCrabWorkflowProxy(ResyncExistingBranchesProxy, _CrabProxyBase):
         return n_active + n_waiting < min_wave
 
     def submit(self, retry_jobs=None):
+        # explicitly, and before the wave gate: holding jobs back below returns without
+        # delegating to the mixin, which would let a mass retry through on a later wave
+        self.stop_on_mass_initial_retry(retry_jobs)
         retry_jobs = retry_jobs or OrderedDict()
         n_waiting = len(self.job_data.unsubmitted_jobs) + len(retry_jobs)
         if self._should_submit_crab_group(n_waiting):

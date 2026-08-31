@@ -122,7 +122,13 @@ action() {
       run_cmd /usr/bin/python3 -m venv --system-site-packages "$dsprod_env"
       source "$dsprod_env/bin/activate"
       run_cmd pip install --quiet --upgrade pip
-      run_cmd pip install --quiet luigi==3.7.3 law
+      # --ignore-installed, because --system-site-packages otherwise hides the problem: pip
+      # resolves luigi's own dependencies (typing_extensions, tenacity, ...) against lxplus's
+      # copies and leaves them out of the venv. An HTCondor worker image does not ship them, so
+      # law cannot be imported in the job and law_job.sh stops with the unhelpful "law not found
+      # ... should be made available in bootstrap file". The system packages are still there for
+      # what they are wanted for -- gfal2 is not a dependency of law or luigi.
+      run_cmd pip install --quiet --ignore-installed luigi==3.7.3 law
       touch "$dsprod_env/.installed"
     else
       source "$dsprod_env/bin/activate"

@@ -91,11 +91,19 @@ era, and a batch node refuses to build one — that query belongs on the submitt
 The core production task: a fused GEN→…→MiniAOD→NanoAOD chain for one `(era, point, seed)`, run
 via `cmsDriver` steps (`dsprod/run_step.py`). Branches are enumerated by
 `runprod_branches(eras, points)` — the single source of truth for branch numbering, shared with
-`NanoMergeTask`. For each requested NanoAOD version it stages one file:
+`NanoMergeTask`. For each requested NanoAOD version it stages one file and records that it did:
 
 ```
 <output>/staging/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.root
+<output>/produced/nanoAOD_<version>/<era>/<point>/nano_<version>_<seed>.json
 ```
+
+The **record**, not the staged file, is what `RunProd` declares as its output. `NanoMergeTask`
+deletes each staged file once it has merged it, so the file's presence cannot say whether a seed
+ran: a resumed workflow would find the outputs of every already-merged seed missing and regenerate
+the whole era (law marks such jobs `initially missing task outputs`). Nothing deletes the records,
+so completeness survives the merge. To redo a seed deliberately, delete its record along with its
+nano file.
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
 point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (2 by default), so
@@ -108,10 +116,24 @@ inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). 
 
 Merges a group of per-seed nanos (`files_per_merge` per group) into one output with `haddnano`,
 verifies that the merged event count equals the sum of the inputs, and — only then — removes the
-staged per-seed inputs. Output is the final, FLAF-facing file:
+staged per-seed inputs. It takes the input paths from the grouping itself, not from what `RunProd`
+declares (that is the record), and refuses to run if a staged file of its group is gone although
+its seed is recorded as produced. Output is the final, FLAF-facing file:
 
 ```
 <output>/nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root
+```
+
+### `BackfillProducedRecords`
+
+A migration for productions that ran before the `produced/` records existed, whose staged files
+have already been merged away: it reconstructs the records from what is on storage — a merged file
+accounts for the whole group of seeds behind it, a surviving staged file for its own seed — and
+leaves existing records alone, so it is safe to re-run (delete its `backfill.done` flag to make it
+list storage again).
+
+```sh
+law run BackfillProducedRecords --setup <setup> --eras Run3_2023 --workflow local
 ```
 
 ### `CollectGridpacks`

@@ -14,6 +14,7 @@ import datetime
 import fnmatch
 import glob
 import hashlib
+import json
 import math
 import os
 import re
@@ -33,6 +34,7 @@ from .law_wlcg import WLCGFileSystem, WLCGFileTarget
 from .tools import (
     CreateVomsProxy,
     ResyncExistingBranchesProxy,
+    StopOnMassInitialRetryProxy,
     on_batch_node,
     ps_call,
     submitted_task_family,
@@ -124,6 +126,18 @@ def runprod_branches(eras, points):
             for job in range(point.n_jobs(era)):
                 out.append((era, pi, job + 1))  # seed = 1-based job index
     return out
+
+
+def merge_groups(seeds, files_per_merge):
+    """Ordered (group index, seeds) pairs — the single source of NanoMergeTask's grouping.
+
+    Shared by `NanoMergeTask.create_branch_map` and `BackfillProducedRecords` (which needs to
+    know which seeds a merged file accounts for), so the two never drift.
+    """
+    return [
+        (group, seeds[start : start + files_per_merge])
+        for group, start in enumerate(range(0, len(seeds), files_per_merge))
+    ]
 
 
 def premix_dataset_for_era(conditions, era):
@@ -356,6 +370,54 @@ class Task(law.Task):
         """Path of a product relative to `fs_default`: <storage name>/<parts...>."""
         return os.path.join(self.storage_name(), *parts)
 
+    def staged_nano_target(self, era, point, version, seed):
+        """The per-seed nano file `RunProd` stages for `NanoMergeTask` to consume.
+
+        Deliberately not what `RunProd` declares as its output: the merge deletes this file, and
+        an output that disappears is read as work to redo (see `produced_nano_target`).
+        """
+        name = self.process.point_name(point)
+        return self.storage_target(
+            "staging", f"nanoAOD_{version}", era, name, f"nano_{version}_{seed}.root"
+        )
+
+    def produced_nano_target(self, era, point, version, seed):
+        """The record that a seed's nano file was produced -- `RunProd`'s actual output.
+
+        `NanoMergeTask` deletes each staged nano file once it has merged and verified it, so the
+        file's presence cannot say whether the seed ran: a resumed workflow found the outputs of
+        every already-merged seed missing and resubmitted the whole era (law marks such jobs
+        "initially missing task outputs"). Nothing deletes this record, so completeness survives
+        the merge. To redo a seed on purpose, delete its record along with its nano file.
+        """
+        name = self.process.point_name(point)
+        return self.storage_target(
+            "produced", f"nanoAOD_{version}", era, name, f"nano_{version}_{seed}.json"
+        )
+
+    def merged_nano_target(self, era, point, version, group):
+        """The merged nano file `NanoMergeTask` writes for one group of seeds."""
+        name = self.process.point_name(point)
+        return self.storage_target(
+            f"nanoAOD_{version}", era, name, f"nano_{version}_{group}.root"
+        )
+
+    def _write_produced_record(self, era, point, version, seed, n_events):
+        """Record that this seed's nano file exists, so its merge can safely delete the file."""
+        record = {
+            "era": era,
+            "point": self.process.point_name(point),
+            "version": version,
+            "seed": seed,
+            "events_requested": int(n_events),
+            "staged": self.staged_nano_target(era, point, version, seed).uri(),
+        }
+        with self.produced_nano_target(era, point, version, seed).localize(
+            "w"
+        ) as out_local:
+            with open(out_local.abspath, "w") as f:
+                json.dump(record, f)
+
     def premix_target(self, era):
         """Where an era's premix file list lives on `fs_default`.
 
@@ -395,7 +457,9 @@ class Task(law.Task):
 
 
 class HTCondorWorkflowProxy(
-    ResyncExistingBranchesProxy, law.htcondor.workflow.HTCondorWorkflowProxy
+    ResyncExistingBranchesProxy,
+    StopOnMassInitialRetryProxy,
+    law.htcondor.workflow.HTCondorWorkflowProxy,
 ):
     def __init__(self, *args, **kwargs):
         super(HTCondorWorkflowProxy, self).__init__(*args, **kwargs)
@@ -849,17 +913,12 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
             )
         return reqs
 
-    def _staged_target(self, era, point, version, seed):
-        name = self.process.point_name(point)
-        return self.storage_target(
-            "staging", f"nanoAOD_{version}", era, name, f"nano_{version}_{seed}.root"
-        )
-
     def output(self):
         era, pi, seed = self.branch_data
         point = self.prod_points[pi]
         return {
-            v: self._staged_target(era, point, v, seed) for v in self.nano_versions(era)
+            v: self.produced_nano_target(era, point, v, seed)
+            for v in self.nano_versions(era)
         }
 
     def run(self):
@@ -901,8 +960,13 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                         miniaod,
                         n_threads=int(self.n_cpus),
                     )
-                    with self.output()[version].localize("w") as out_local:
+                    with self.staged_nano_target(era, point, version, seed).localize(
+                        "w"
+                    ) as out_local:
                         shutil.copy(nano_out, out_local.abspath)
+                    # only once the nano file is on storage, so a record never outlives a
+                    # missing file
+                    self._write_produced_record(era, point, version, seed, n_evt)
             finally:
                 if is_tmp:
                     shutil.rmtree(work_dir, ignore_errors=True)
@@ -921,14 +985,8 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
             for pi, point in enumerate(self.prod_points):
                 seeds = list(range(1, point.n_jobs(era) + 1))
                 for version in self.nano_versions(era):
-                    for group, start in enumerate(range(0, len(seeds), fpm)):
-                        branches[bid] = (
-                            era,
-                            pi,
-                            version,
-                            group,
-                            seeds[start : start + fpm],
-                        )
+                    for group, group_seeds in merge_groups(seeds, fpm):
+                        branches[bid] = (era, pi, version, group, group_seeds)
                         bid += 1
         return branches
 
@@ -948,17 +1006,25 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     def output(self):
         era, pi, version, group, _ = self.branch_data
-        name = self.process.point_name(self.prod_points[pi])
-        return self.storage_target(
-            f"nanoAOD_{version}", era, name, f"nano_{version}_{group}.root"
-        )
+        return self.merged_nano_target(era, self.prod_points[pi], version, group)
 
     def run(self):
         era, pi, version, _, seeds = self.branch_data
         vparams = run_step.resolve_step_params(
             self.conditions, era, "NANO", version=version
         )
-        staged = [self.input()[seed][version] for seed in seeds]
+        # the RunProd requirement provides the `produced/` records, not the files themselves
+        point = self.prod_points[pi]
+        staged = [self.staged_nano_target(era, point, version, seed) for seed in seeds]
+        missing = [t for t in staged if not t.exists()]
+        if missing:
+            raise RuntimeError(
+                f"{len(missing)} of {len(staged)} staged nano files of this merge group are "
+                f"gone (first: {missing[0].uri()}), although their seeds are recorded as "
+                "produced. Either this group was merged before and its merged file was "
+                "removed -- delete the seeds' `produced/` records to regenerate them -- or "
+                "the storage lost them."
+            )
         work_dir, is_tmp = self.law_job_home()
         try:
             with contextlib.ExitStack() as stack:
@@ -986,3 +1052,75 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         finally:
             if is_tmp:
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+
+class BackfillProducedRecords(Task, law.LocalWorkflow):
+    """Write the `produced/` records of seeds that ran before those records existed.
+
+    `RunProd` used to declare the staged nano file itself as its output, so a production whose
+    files `NanoMergeTask` had already merged and deleted looked entirely unproduced, and a
+    restart resubmitted every seed of the era. The records fix that going forward; this task
+    reconstructs them for work that is already done, from what is on storage:
+
+      * a merged file accounts for the whole group of seeds behind it -- the merge writes it only
+        after checking that its entry count equals the sum of its inputs, and deletes the inputs
+        only after that;
+      * a staged nano file that is still there accounts for its own seed.
+
+    Existing records are left alone, so this is safe to re-run; delete a branch's
+    `backfill.done` flag to make it list storage again. One branch per (era, point, version) keeps
+    the listings small and lets the branches run in parallel.
+    """
+
+    def create_branch_map(self):
+        branches = {}
+        bid = 0
+        for era in self.prod_eras:
+            for pi, _ in enumerate(self.prod_points):
+                for version in self.nano_versions(era):
+                    branches[bid] = (era, pi, version)
+                    bid += 1
+        return branches
+
+    def output(self):
+        era, pi, version = self.branch_data
+        name = self.process.point_name(self.prod_points[pi])
+        return self.storage_target(
+            "produced", f"nanoAOD_{version}", era, name, "backfill.done"
+        )
+
+    def run(self):
+        era, pi, version = self.branch_data
+        point = self.prod_points[pi]
+        fpm = int(self.prod_setup.get("files_per_merge", 20))
+        seeds = list(range(1, point.n_jobs(era) + 1))
+
+        merged_seeds = set()
+        for group, group_seeds in merge_groups(seeds, fpm):
+            if self.merged_nano_target(era, point, version, group).exists():
+                merged_seeds.update(group_seeds)
+
+        written = skipped = staged_seen = 0
+        for seed in seeds:
+            record = self.produced_nano_target(era, point, version, seed)
+            if record.exists():
+                skipped += 1
+                continue
+            if seed in merged_seeds:
+                pass
+            elif self.staged_nano_target(era, point, version, seed).exists():
+                staged_seen += 1
+            else:
+                continue
+            self._write_produced_record(era, point, version, seed, point.events_per_job)
+            written += 1
+
+        name = self.process.point_name(point)
+        print(
+            f"BackfillProducedRecords[{era}/{name}/{version}]: {written} records written "
+            f"({len(merged_seeds)} seeds covered by merged files, {staged_seen} by a staged "
+            f"file), {skipped} already present, {len(seeds)} seeds in total"
+        )
+        with self.output().localize("w") as out_local:
+            with open(out_local.abspath, "w") as f:
+                f.write(f"{written} written, {skipped} present, {len(seeds)} seeds\n")
