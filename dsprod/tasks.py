@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import law
@@ -1089,33 +1090,73 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
             "produced", f"nanoAOD_{version}", era, name, "backfill.done"
         )
 
+    upload_threads = luigi.IntParameter(
+        default=16,
+        significant=False,
+        description="records to upload at once; each upload is a remote round trip, so this is "
+        "latency-bound and worth raising on a slow endpoint",
+    )
+
+    @staticmethod
+    def _names(dir_target):
+        """File names in a remote directory, empty when it does not exist yet."""
+        try:
+            return set(dir_target.listdir())
+        except Exception:
+            return set()
+
     def run(self):
         era, pi, version = self.branch_data
         point = self.prod_points[pi]
         fpm = int(self.prod_setup.get("files_per_merge", 20))
         seeds = list(range(1, point.n_jobs(era) + 1))
 
+        name = self.process.point_name(point)
+
+        # Three listings instead of a remote stat per seed. An era has 8300 seeds per nano
+        # version, and at one round trip each the stats alone ran for hours -- long enough that
+        # the first real migration had to be finished out of band.
+        have_records = self._names(
+            self.produced_nano_target(era, point, version, 1).parent
+        )
+        have_staged = self._names(
+            self.staged_nano_target(era, point, version, 1).parent
+        )
+        have_merged = self._names(
+            self.merged_nano_target(era, point, version, 0).parent
+        )
+
         merged_seeds = set()
         for group, group_seeds in merge_groups(seeds, fpm):
-            if self.merged_nano_target(era, point, version, group).exists():
+            if f"nano_{version}_{group}.root" in have_merged:
                 merged_seeds.update(group_seeds)
 
-        written = skipped = staged_seen = 0
+        todo, skipped, staged_seen = [], 0, 0
         for seed in seeds:
-            record = self.produced_nano_target(era, point, version, seed)
-            if record.exists():
+            if f"nano_{version}_{seed}.json" in have_records:
                 skipped += 1
                 continue
             if seed in merged_seeds:
                 pass
-            elif self.staged_nano_target(era, point, version, seed).exists():
+            elif f"nano_{version}_{seed}.root" in have_staged:
                 staged_seen += 1
             else:
                 continue
-            self._write_produced_record(era, point, version, seed, point.events_per_job)
-            written += 1
+            todo.append(seed)
 
-        name = self.process.point_name(point)
+        # ... and the writes in parallel, for the same reason
+        if todo:
+            with ThreadPoolExecutor(max_workers=self.upload_threads) as pool:
+                list(
+                    pool.map(
+                        lambda seed: self._write_produced_record(
+                            era, point, version, seed, point.events_per_job
+                        ),
+                        todo,
+                    )
+                )
+        written = len(todo)
+
         print(
             f"BackfillProducedRecords[{era}/{name}/{version}]: {written} records written "
             f"({len(merged_seeds)} seeds covered by merged files, {staged_seen} by a staged "
