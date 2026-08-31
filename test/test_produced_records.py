@@ -10,6 +10,7 @@ of its own CRAB wrapper as `.../job.py/crab/crab_wrapper.sh`.
 
 import os
 import sys
+import types
 import unittest
 
 dsprod_repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -70,6 +71,26 @@ class TestMergeGroups(unittest.TestCase):
     def test_group_count_matches_the_production(self):
         # 8300 seeds at 50 per merge = 166 groups per nano version, 332 over v12 + v15
         self.assertEqual(len(merge_groups(list(range(1, 8301)), 50)), 166)
+
+
+class TestBackfillNames(unittest.TestCase):
+    """The backfill decides from directory listings, so a missing directory must not raise."""
+
+    def names(self, target):
+        from dsprod.tasks import BackfillProducedRecords
+
+        return BackfillProducedRecords._names(target)
+
+    def test_listing_is_returned_as_a_set(self):
+        target = types.SimpleNamespace(listdir=lambda: ["a.json", "b.json"])
+        self.assertEqual(self.names(target), {"a.json", "b.json"})
+
+    def test_missing_directory_is_empty_not_fatal(self):
+        # nothing has been produced for this point yet, so the directory does not exist
+        def boom():
+            raise RuntimeError("No such file or directory")
+
+        self.assertEqual(self.names(types.SimpleNamespace(listdir=boom)), set())
 
 
 class _Proxy(StopOnMassInitialRetryProxy):
