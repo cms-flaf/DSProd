@@ -180,6 +180,15 @@ submitted without the quarantined sites. It is on by default; the thresholds liv
 | `window_hours` | 24 | outcomes older than this stop counting |
 | `max_sites` | 10 | never quarantine more than this many sites at once |
 
+Only what CRAB says about a job enters the record, and only from the status response itself: a
+job that finished, or that failed **with a job-level error code**. Everything else is law's own
+bookkeeping and says nothing about a site — a resumed run flips jobs whose outputs are gone to
+retry, and a killed task reports all of its jobs as failed. Counting those once turned a single
+poll into 8285 failures spread over every site of the production, and the ~100 % baseline that
+resulted left the quarantine unable to fire for a node that was failing two thirds of its jobs.
+If a record ever looks like that, delete `data/crab_site_stats.json` — it is advisory and rebuilds
+within a poll or two.
+
 A site's failure rate counts every job **sent** there — the ones that already ended plus the ones
 still in flight. That distinction matters more than it looks: a job fails in seconds and succeeds in
 hours, so a rate computed over finished jobs alone reads as ~100 % at every site early in a
