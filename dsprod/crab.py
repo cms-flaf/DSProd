@@ -26,6 +26,7 @@ import math
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.request
 import uuid
@@ -189,6 +190,10 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         super(DSProdCrabJobManager, self).__init__(*args, **kwargs)
         #: proj_dir -> number of consecutive polls whose response could not be read
         self._unreadable = {}
+        #: job ids already recorded, and the in-flight counts per project
+        self._stats_seen = set()
+        self._stats_lock = threading.Lock()
+        self._in_flight = {}
 
     @classmethod
     def parse_query_output(cls, out, proj_dir, job_ids, skip_transfers=False):
@@ -215,6 +220,72 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
                 f"\n      {shown}"
             )
 
+    #: per-site record to feed, injected by CrabWorkflow.crab_create_job_manager; None disables it
+    site_stats = None
+
+    #: in-flight counts of a project not queried for this long stop counting
+    in_flight_stale_seconds = 3600.0
+
+    def harvest_site_stats(self, proj_dir, result):
+        """Record what CRAB itself said about each job, per site.
+
+        Two things must not reach the record, and both are avoided by harvesting here rather
+        than from `job_data` after the poll:
+
+        * law's own bookkeeping. A resumed run flips every job whose outputs are gone to retry
+          ("initially missing task outputs"), and a killed task reports its jobs as failed;
+          neither says anything about a site. Harvested from `job_data` those became 8285
+          failures in one poll, spread over every site of the production, and the resulting
+          ~100 % baseline everywhere made the quarantine unable to fire for a genuinely broken
+          site. A CRAB status response only ever carries what happened to the job, and a job
+          that ended without a job-level error code (`Error` absent -- killed, or never ran)
+          is skipped as well.
+        * the wrong job. law syncs per-job `extra` onto `job_data` positionally
+          (`law/workflow/remote.py`), so with more than one live CRAB project the
+          `site_history` of one job can land on another. The parsed result is keyed by job id.
+
+        Jobs still in flight are counted too -- not as outcomes, but as part of what was sent to
+        a site, which is the denominator its failure rate is measured against.
+        """
+        if self.site_stats is None or not result:
+            return
+        in_flight = Counter()
+        now = time.time()
+        with self._stats_lock:
+            for job_id, data in result.items():
+                if not isinstance(data, dict):
+                    continue
+                history = (data.get("extra") or {}).get("site_history") or []
+                if not history:
+                    continue
+                site = history[-1]
+                status = data.get("status")
+                if status == self.FINISHED:
+                    ok = True
+                elif status == self.FAILED and data.get("code") is not None:
+                    ok = False
+                elif status == self.FAILED:
+                    # no job-level error code: killed, or never started -- not the site's doing
+                    continue
+                else:
+                    in_flight[site] += 1
+                    continue
+                key = (str(job_id), ok)
+                if key in self._stats_seen:
+                    continue
+                self._stats_seen.add(key)
+                self.site_stats.record(site, ok)
+            self._in_flight[proj_dir] = (now, in_flight)
+            cutoff = now - self.in_flight_stale_seconds
+            self._in_flight = {
+                d: (ts, c) for d, (ts, c) in self._in_flight.items() if ts >= cutoff
+            }
+            combined = Counter()
+            for _, counts in self._in_flight.values():
+                combined.update(counts)
+            self.site_stats.set_in_flight(combined)
+            self.site_stats.save()
+
     def query(self, proj_dir, job_ids=None, *args, **kwargs):
         proj_dir = str(proj_dir)
         last_error = None
@@ -229,6 +300,7 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
                     time.sleep(self.query_retry_delay)
                 continue
             self._unreadable.pop(proj_dir, None)
+            self.harvest_site_stats(proj_dir, result)
             return result
 
         n = self._unreadable.get(proj_dir, 0) + 1
@@ -564,9 +636,8 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     #: code tarball shipped to the workers, built once per law process (see _code_tarball)
     _code_tarball_path = None
 
-    #: rolling per-site job statistics, and the (job_num, attempt, ok) keys already counted
+    #: rolling per-site job statistics, fed by the job manager (see harvest_site_stats)
     _site_stats_obj = None
-    _site_stats_seen = None
 
     crab_memory = luigi.IntParameter(
         default=-1,
@@ -686,7 +757,6 @@ class CrabWorkflow(law.cms.CrabWorkflow):
                 else (lambda: None)
             )
         self._crab_kerberos_update()
-        self._collect_site_stats()
         return True
 
     def site_stats(self):
@@ -696,41 +766,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
                 os.path.join(self.ana_data_path(), "crab_site_stats.json"),
                 self._crab_cfg().get("auto_blacklist"),
             )
-            self._site_stats_seen = set()
         return self._site_stats_obj
-
-    def _collect_site_stats(self):
-        """Record the outcome of every job that reached a terminal state since the last poll.
-
-        CRAB reports where a job ran in `SiteHistory`, which law stores as `extra.site_history`.
-        Jobs still in flight are counted too -- not as outcomes, but as part of what was sent to a
-        site, which is the denominator its failure rate is measured against.
-        Each attempt is counted once: `job_data.attempts` has already been incremented by the time
-        a job shows up as RETRY, and the ok flag separates a retry that then succeeded from the
-        failure that preceded it.
-        """
-        proxy = self.workflow_proxy
-        manager = proxy.job_manager
-        terminal = (manager.FINISHED, manager.FAILED, manager.RETRY)
-        stats = self.site_stats()
-        in_flight = Counter()
-        for job_num, data in proxy.job_data.jobs.items():
-            status = data.get("status")
-            history = (data.get("extra") or {}).get("site_history") or []
-            if not history:
-                continue
-            if status not in terminal:
-                # still pending or running: part of what was sent to the site, but no outcome yet
-                in_flight[history[-1]] += 1
-                continue
-            ok = status == manager.FINISHED
-            key = (job_num, proxy.job_data.attempts.get(job_num, 0), ok)
-            if key in self._site_stats_seen:
-                continue
-            self._site_stats_seen.add(key)
-            stats.record(history[-1], ok)
-        stats.set_in_flight(in_flight)
-        stats.save()
 
     def crab_job_manager_cls(self):
         return DSProdCrabJobManager
@@ -748,6 +784,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         actionable error before the first submission.
         """
         manager = super().crab_create_job_manager(**kwargs)
+        manager.site_stats = self.site_stats()
         try:
             manager.cmssw_env
         except Exception as exc:
