@@ -8,6 +8,7 @@ retry ("initially missing task outputs") and the harvest had counted each one ag
 site it last ran at, so the baseline every site is compared against was itself ~100 %.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -153,6 +154,67 @@ class TestQuarantineWithACleanBaseline(unittest.TestCase):
                 for _ in range(100):
                     stats.record(site, False, now=now)
             self.assertEqual(stats.blacklist(now=now), [])
+
+
+class TestLoadingARecordWrittenByAnotherVersion(unittest.TestCase):
+    """A file in the production area may not stop a submission.
+
+    `SiteStats.load` tolerates unreadable JSON -- the record is advisory and rebuilds within a
+    poll or two -- but it coerced each site's entries *outside* that `try`, and `load` runs from
+    `__init__`, i.e. from `crab_create_job_manager` while a workflow is being submitted. So a file
+    written by a version that shaped `events` differently raised before the first job went out.
+    """
+
+    def write(self, payload):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "stats.json")
+        with open(path, "w") as f:
+            json.dump(payload, f)
+        return path
+
+    def test_a_site_whose_events_do_not_coerce_is_dropped_and_the_others_kept(self):
+        path = self.write(
+            {
+                "version": 1,
+                "sites": {
+                    "T2_CH_CERN": {"events": [{"at": 1.0, "ok": 1}]},
+                    "T1_DE_KIT": {"events": [[1.0, 0], [2.0, 1]]},
+                },
+            }
+        )
+        stats = SiteStats(path)
+        self.assertEqual(list(stats.sites), ["T1_DE_KIT"])
+        self.assertEqual(stats.sites["T1_DE_KIT"]["events"], [(1.0, 0), (2.0, 1)])
+
+    def test_entries_that_are_not_numbers_are_dropped(self):
+        path = self.write(
+            {
+                "sites": {
+                    "T2_CH_CERN": {"events": [["yesterday", 1]]},
+                    "T1_DE_KIT": {"events": [], "quarantined_until": "soon"},
+                    "T2_IT_Legnaro": {"events": [[1.0, 1, "site"]]},
+                }
+            }
+        )
+        self.assertEqual(SiteStats(path).sites, {})
+
+    def test_a_payload_that_is_not_an_object_is_tolerated(self):
+        self.assertEqual(SiteStats(self.write([{"T2_CH_CERN": []}])).sites, {})
+        self.assertEqual(SiteStats(self.write("nothing")).sites, {})
+
+    def test_what_this_version_writes_still_reads_back(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "stats.json")
+        written = SiteStats(path)
+        written.record("T1_DE_KIT", False, now=1_000_000.0)
+        written.record("T1_DE_KIT", True, now=1_000_001.0)
+        written.save()
+        self.assertEqual(
+            SiteStats(path).sites["T1_DE_KIT"]["events"],
+            [(1_000_000.0, 0), (1_000_001.0, 1)],
+        )
 
 
 if __name__ == "__main__":

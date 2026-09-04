@@ -97,7 +97,7 @@ is likewise never shipped: importing from it is local by construction.
 crab:
   max_memory_mb: 2500
   max_cores: 4          # ceiling on a job's cores; caps each task's own n_cpus
-  # parallel_jobs: 5000     # jobs per CRAB task / in flight
+  # parallel_jobs: 5000     # jobs per CRAB task / in flight; `auto` = scale with the run
   # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
   # retry_release_minutes: 45  # release a parked retry after this long, whatever the wave size
 ```
@@ -116,6 +116,17 @@ default — and submits the rest in waves. So a 43 000-branch production is simp
 `law run`; there is no need to chunk the branch range by hand. `--parallel-jobs <n>` on the command
 line overrides both settings.
 
+`crab.parallel_jobs: auto` derives the ceiling from the run instead: the larger of 5000 and the
+number of branches this run submits, capped at 8000. It is worth setting **only** for a production
+too large to go out in one wave. Nothing queues on this backend — 4798 of the 4800 branches of
+Run3_2023BPix started within half an hour of being submitted — so the makespan is the ramp plus one
+job length per *wave*, and the number of waves is `branches / parallel_jobs`. At the 87 600 branches
+of the 2024 setup that is 17.5 waves at 5000 against 11.0 at 8000, about **-37 %** of the makespan;
+at BPix scale `auto` resolves to the same 5000 as the default and changes nothing at all, which is
+why it is opt-in. The cap is below the number everyone quotes: "a CRAB task holds ~10 000 jobs"
+is folklore — the limit is enforced on the server and invisible from the client — and the largest
+task submitted from here so far held 4090 jobs.
+
 A wave becomes its own CRAB task only when it is worth one. `crab.refill_fraction` (default 0.2)
 sets that bar as a fraction of `parallel_jobs`: with the defaults a wave needs **1000 jobs waiting
 and 1000 free slots**. Jobs below the bar are held back — but only for as long as reaching it is
@@ -123,6 +134,13 @@ still possible. Once the work left in the whole production (running + waiting) c
 a wave, waiting could only delay it, so whatever is waiting goes out at once, however little that
 is. `parallel_jobs` set to unlimited (`--parallel-jobs 0`) bypasses all of this and restores law's
 own behaviour.
+
+!!! note "`auto` raises that bar with it"
+    The bar is `refill_fraction` *of* `parallel_jobs`, so at 8000 a wave needs 1600 waiting jobs
+    instead of 1000, and the tail rule above releases the last 1600 jobs in whatever small tasks
+    the polls make of them. If that tail matters, set `refill_fraction: 0.125` next to `auto` to
+    put the bar back at ~1000. The default deliberately stays where it is, so `auto` moves one
+    number only.
 
 What is measured against the bar is the **waiting backlog** — never-submitted branches plus the
 retries already held back. A generation of retries offered by the current poll is parked first and
@@ -219,7 +237,9 @@ retry, and a killed task reports all of its jobs as failed. Counting those once 
 poll into 8285 failures spread over every site of the production, and the ~100 % baseline that
 resulted left the quarantine unable to fire for a node that was failing two thirds of its jobs.
 If a record ever looks like that, delete `data/crab_site_stats.json` — it is advisory and rebuilds
-within a poll or two.
+within a poll or two. For the same reason, entries in it that cannot be read back (a file written
+by an older version, a half-written one) are dropped when it is loaded: an advisory file must not
+be able to stop a submission.
 
 A site's failure rate counts every job **sent** there — the ones that already ended plus the ones
 still in flight. That distinction matters more than it looks: a job fails in seconds and succeeds in
@@ -247,6 +267,14 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     per-job information yet — and the fact is printed once for the task instead of once per job. A
     task whose status stays unreadable for ten consecutive polls does raise: a production that
     quietly stalls is worse than one that stops.
+
+!!! note "A job that has run is finished, whatever `crab.log` says"
+    DSProd disables CRAB's stageout, so a job CRAB reports as `transferring`/`transferred` has
+    done all it will ever do. law normally decides that per poll by reading
+    `disableAutomaticOutputCollection` out of the project's `crab.log`; a log that is missing or
+    was rewritten without that line reads as "transfers expected", and those jobs are then polled
+    as running until the workflow gives up on them. DSProd pins the setting instead, so it does
+    not depend on a log file surviving.
 
 !!! note "CRAB does not write to your AFS home"
     CRAB rewrites its task cache `~/.crab3` on *every* command, status queries included. With

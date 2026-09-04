@@ -11,6 +11,7 @@ RunProd (dsprod/tasks.py) drives this: run the GEN..MINIAOD chain once in a work
 one NANO per version off the shared MiniAOD.
 """
 
+import json
 import os
 
 # `ps_call` is imported where it is used, not here: the conditions resolution and the cmsDriver
@@ -311,17 +312,84 @@ def hadd_nano(step_params, out_path, in_paths, work_dir, verbose=1):
         raise
 
 
-def count_events(step_params, path, work_dir, tree="Events"):
-    """Return the number of entries in `tree` of a nano file (opened in the nano CMSSW env)."""
+#: counts the entries of every requested file in one python process. Reports through a JSON file
+#: rather than on stdout, and keyed by path rather than in order: ROOT prints its own warnings to
+#: stdout, so any positional read of the output is a read of whatever ROOT said last.
+_COUNT_EVENTS_SCRIPT = """import json
+import sys
+
+import ROOT
+
+with open(sys.argv[1]) as in_file:
+    request = json.load(in_file)
+counts = {}
+for path in request["paths"]:
+    root_file = ROOT.TFile.Open(path)
+    if not root_file or root_file.IsZombie():
+        raise RuntimeError("cannot open %s" % path)
+    tree = root_file.Get(request["tree"])
+    if not tree:
+        raise RuntimeError("%s holds no %s tree" % (path, request["tree"]))
+    counts[path] = int(tree.GetEntries())
+    root_file.Close()
+with open(sys.argv[2], "w") as out_file:
+    json.dump(counts, out_file)
+"""
+
+
+def count_events(step_params, paths, work_dir, tree="Events"):
+    """Entries of `tree` in each of `paths`, in that order (counted in the nano CMSSW env).
+
+    Every invocation enters that env -- a `scram runtime` in the release, inside a container when
+    the worker OS differs -- which costs far more than the counting itself: a merge group counting
+    its 50 inputs and its output one file at a time spent about 10 minutes of its 3 h slot on
+    nothing else. So the whole list goes in one invocation.
+
+    The file list and the counts are passed as JSON files in `work_dir`, which keeps a group's 50
+    paths off the command line and the result off stdout (see `_COUNT_EVENTS_SCRIPT`).
+    """
+    if isinstance(paths, str):
+        # a single path would be iterated character by character, and the entry count of every
+        # character of it asked for
+        raise TypeError("count_events takes a sequence of paths, not one path")
+    paths = [str(p) for p in paths]
     script = os.path.join(work_dir, "_count_events.py")
+    request_path = os.path.join(work_dir, "_count_events_in.json")
+    counts_path = os.path.join(work_dir, "_count_events_out.json")
     with open(script, "w") as f:
-        f.write(
-            "import ROOT, sys\n"
-            "f = ROOT.TFile.Open(sys.argv[1])\n"
-            f'print(int(f.Get("{tree}").GetEntries()))\n'
-        )
+        f.write(_COUNT_EVENTS_SCRIPT)
+    with open(request_path, "w") as f:
+        json.dump({"tree": tree, "paths": paths}, f)
+    # a result left by an earlier call must not be read as this one's
+    if os.path.exists(counts_path):
+        os.remove(counts_path)
     from .tools import ps_call
 
-    cmd = f"{_cmsenv_prefix(step_params)} python3 {script} {path}"
+    cmd = f"{_cmsenv_prefix(step_params)} python3 {script} {request_path} {counts_path}"
     _, out, _ = ps_call([cmd], shell=True, catch_stdout=True, verbose=0)
-    return int(out.strip().splitlines()[-1])
+    return _read_event_counts(counts_path, paths, out)
+
+
+def _read_event_counts(counts_path, paths, stdout=None):
+    """The counts written by `_COUNT_EVENTS_SCRIPT`, in the order of `paths`.
+
+    A file that is not in the result is an error rather than a zero: an unwritten count read as 0
+    would turn a counting failure into a merge that reports having lost every event.
+    """
+    try:
+        with open(counts_path) as f:
+            counts = json.load(f)
+    except (OSError, ValueError) as exc:
+        tail = "\n      ".join((stdout or "").strip().split("\n")[-10:])
+        raise RuntimeError(
+            f"counting the entries of {len(paths)} file(s) produced no readable result "
+            f"({type(exc).__name__}: {exc}). Last of what it printed:\n      "
+            f"{tail or '<no output>'}"
+        ) from exc
+    missing = [p for p in paths if p not in counts]
+    if missing:
+        raise RuntimeError(
+            f"the entry count of {len(missing)} of {len(paths)} file(s) is not in the result "
+            f"(first: {missing[0]})"
+        )
+    return [int(counts[p]) for p in paths]

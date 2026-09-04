@@ -129,7 +129,15 @@ inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). 
 
 Merges a group of per-seed nanos (`files_per_merge` per group) into one output with `haddnano`,
 verifies that the merged event count equals the sum of the inputs, and — only then — removes the
-staged per-seed inputs. It takes the input paths from the grouping itself, not from what `RunProd`
+staged per-seed inputs. Those counts are taken in **one** invocation of the nano release for the
+whole group: entering it (`scram runtime`, in a container when the worker OS differs) costs far
+more than the counting, so a 50-input group counted file by file spent about 10 minutes of its 3 h
+slot before anything had been verified. The counts come back in a JSON file keyed by path — stdout
+is where ROOT prints its own warnings, so nothing may be read off it by position.
+
+Before merging, the group's job size is checked against the `events_requested` field of the seeds'
+`produced/` records, so a group mixing seeds produced at different sizes is refused rather than
+delivered as a file of an unadvertised size. It takes the input paths from the grouping itself, not from what `RunProd`
 declares (that is the record), and refuses to run if a staged file of its group is gone although
 its seed is recorded as produced. Output is the final, FLAF-facing file:
 
