@@ -17,7 +17,11 @@ A group is reported as
   * `blocked` -- at least one seed has no record yet, i.e. `RunProd` still owes it;
   * `broken`  -- every seed is recorded but a staged file is gone and the group is not merged.
                  `NanoMergeTask` refuses such a group (its merged file was removed after the
-                 fact); delete the affected seeds' records so they are produced again.
+                 fact); deleting the affected seeds' records produces them again;
+  * `unknown` -- a listing the state depends on could not be read, so nothing is claimed. A
+                 delivered point -- records kept, staged files deleted by the merge -- is
+                 indistinguishable from `broken` without its merged listing, and `broken` is the
+                 state whose remedy deletes records.
 
 Storage is read with three directory listings per (era, point, nano version) -- the merged files,
 the records and the staged nanos -- never a stat per seed: a full era is thousands of seeds per
@@ -28,7 +32,10 @@ Run it from a production area with the environment set up:
     source env.sh
     run_tools/merge_status.py --setup models/X_HH/setups/Run3_XHHbbWW.yaml --eras Run3_2023BPix
 
-Exit codes: 0 = report written, 1 = at least one group is broken.
+Exit codes: 0 = report written, 1 = at least one group is broken, 3 = at least one listing could
+not be read, so the report is incomplete and no state in it should be acted on. (Not 2: that is
+what `argparse` exits with on a bad option, and "the report never ran" is a different thing from
+"the report could not read storage".)
 """
 
 import argparse
@@ -42,17 +49,25 @@ from law.util import range_join
 
 REPO = Path(__file__).resolve().parent.parent
 
-MERGED, READY, BLOCKED, BROKEN = "merged", "ready", "blocked", "broken"
+MERGED, READY, BLOCKED, BROKEN, UNKNOWN = (
+    "merged",
+    "ready",
+    "blocked",
+    "broken",
+    "unknown",
+)
 #: report order: what is done, what can run now, then what cannot
-STATES = (MERGED, READY, BLOCKED, BROKEN)
+STATES = (MERGED, READY, BLOCKED, BROKEN, UNKNOWN)
 
-#: how many blocked/broken groups are listed individually before the tail is summarised
+#: how many groups that cannot be merged are listed individually before the tail is summarised
 DETAIL_LIMIT = 20
 
-#: the three listings a point and nano version needs, as sets of file names
+#: the three listings a point and nano version needs, as sets of file names; a field is None when
+#: that listing could not be read
 Listing = namedtuple("Listing", ["merged", "records", "staged"])
 
-#: one classified merge branch. `n_missing`/`n_gone` count seeds, for the detail lines.
+#: one classified merge branch. `n_missing`/`n_gone` count seeds, for the detail lines; `unread`
+#: names the listings of its point and version that could not be read.
 Group = namedtuple(
     "Group",
     [
@@ -65,7 +80,9 @@ Group = namedtuple(
         "state",
         "n_missing",
         "n_gone",
+        "unread",
     ],
+    defaults=((),),
 )
 
 
@@ -75,17 +92,30 @@ def classify_group(version, group, seeds, listing):
     A merged group is decided first and on the merged file alone: after a successful merge the
     records are there and the staged files are deliberately gone, which is exactly what `broken`
     looks like otherwise.
+
+    A listing that could not be read therefore never yields `broken` or `ready`: `broken` is the
+    state whose remedy is deleting `produced/` records, and one failed listing on a delivered
+    point would otherwise advise regenerating seeds that are already merged. A missing record is
+    the one thing a merged group cannot have, so `blocked` is still decided without them.
     """
-    if f"nano_{version}_{group}.root" in listing.merged:
+    if listing.merged is not None and f"nano_{version}_{group}.root" in listing.merged:
         return MERGED, 0, 0
+    if listing.records is None:
+        return UNKNOWN, 0, 0
     n_missing = sum(
         1 for seed in seeds if f"nano_{version}_{seed}.json" not in listing.records
     )
-    n_gone = sum(
-        1 for seed in seeds if f"nano_{version}_{seed}.root" not in listing.staged
+    n_gone = (
+        0
+        if listing.staged is None
+        else sum(
+            1 for seed in seeds if f"nano_{version}_{seed}.root" not in listing.staged
+        )
     )
     if n_missing:
         return BLOCKED, n_missing, n_gone
+    if listing.merged is None or listing.staged is None:
+        return UNKNOWN, 0, 0
     if n_gone:
         return BROKEN, n_missing, n_gone
     return READY, 0, 0
@@ -94,9 +124,9 @@ def classify_group(version, group, seeds, listing):
 def storage_looks_empty(groups):
     """True when storage held nothing at all for any group.
 
-    The gfal interface answers a failed listing and a missing directory the same way, so a
-    production this reports as entirely unproduced may instead be one whose endpoint cannot be
-    reached -- worth saying, because the two need very different actions.
+    Worth saying on its own: a production reported as entirely unproduced is more often a wrong
+    `output` name or an endpoint that answers "not there" for everything than 4800 seeds nobody
+    ran.
     """
     return all(
         g.state == BLOCKED and g.n_missing == g.n_seeds and g.n_gone == g.n_seeds
@@ -105,11 +135,23 @@ def storage_looks_empty(groups):
 
 
 def _names(dir_target):
-    """File names in a storage directory, empty when it does not exist (or cannot be read)."""
+    """File names in a storage directory: an empty set when it is not there, None when the listing
+    failed.
+
+    Both answer the same at the gfal layer -- `gfal-ls` exits non-zero either way -- so a listing
+    that raises is followed by an existence check, and only a directory that answers "not there"
+    is read as empty. The one extra round trip buys the difference between a point nobody has
+    produced yet and a delivered point whose listing timed out, which are opposite states with
+    opposite remedies.
+    """
     try:
         return set(dir_target.listdir())
     except Exception:
-        return set()
+        pass
+    try:
+        return None if dir_target.exists() else set()
+    except Exception:
+        return None
 
 
 def read_listings(task, keys, threads=16):
@@ -126,7 +168,7 @@ def read_listings(task, keys, threads=16):
             staged=_names(task.staged_nano_target(era, point, version, 1).parent),
         )
 
-    with ThreadPoolExecutor(max_workers=threads) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
         return dict(pool.map(read, keys))
 
 
@@ -139,9 +181,8 @@ def classify(task, threads=16):
     listings = read_listings(task, keys, threads=threads)
     groups = []
     for branch, (era, pi, version, group, seeds) in sorted(branch_map.items()):
-        state, n_missing, n_gone = classify_group(
-            version, group, seeds, listings[(era, pi, version)]
-        )
+        listing = listings[(era, pi, version)]
+        state, n_missing, n_gone = classify_group(version, group, seeds, listing)
         groups.append(
             Group(
                 branch=branch,
@@ -153,6 +194,9 @@ def classify(task, threads=16):
                 state=state,
                 n_missing=n_missing,
                 n_gone=n_gone,
+                unread=tuple(
+                    name for name, v in zip(Listing._fields, listing) if v is None
+                ),
             )
         )
     return groups
@@ -166,12 +210,18 @@ def _n(count, noun):
 def detail_line(g):
     """One line about a group that cannot be merged, saying what it is waiting for."""
     where = f"branch {g.branch:<6} {g.era}/{g.point}/{g.version} group {g.group}"
+    if g.state == UNKNOWN:
+        return f"{where}: {' and '.join(g.unread)} could not be listed"
     if g.state == BLOCKED:
-        return f"{where}: {g.n_missing} of {g.n_seeds} seeds have no produced record"
-    return (
-        f"{where}: all {g.n_seeds} seeds recorded but {_n(g.n_gone, 'staged file')} gone "
-        "(delete those seeds' records to produce them again)"
-    )
+        line = f"{where}: {g.n_missing} of {g.n_seeds} seeds have no produced record"
+    else:
+        line = (
+            f"{where}: all {g.n_seeds} seeds recorded but {_n(g.n_gone, 'staged file')} gone "
+            "-- merged before and the merged file removed, or storage lost them"
+        )
+    if g.unread:
+        line += f" ({' and '.join(g.unread)} could not be listed)"
+    return line
 
 
 def merge_command(args, groups):
@@ -187,6 +237,9 @@ def merge_command(args, groups):
     if args.test:
         parts.append(f"--test {args.test}")
     parts.append(f"--branches {range_join(sorted(ready), to_str=True)}")
+    # the backend is not a detail the operator can leave to the default here: law's is htcondor,
+    # and a multi-day production runs on crab, whose job data lives in a different file
+    parts.append(f"--workflow {args.workflow}")
     return " ".join(parts)
 
 
@@ -209,12 +262,22 @@ def report(args, groups, out=sys.stdout):
     if storage_looks_empty(groups):
         print(
             "\nnothing of this production is on fs_default. If it has already produced files, "
-            "the storage endpoint or the VOMS proxy is the problem, not the production: a "
-            "listing that fails is indistinguishable from a directory that is not there.",
+            "check the storage endpoint, the VOMS proxy and the setup's `output` name: every "
+            "directory of it answered that it is not there.",
             file=out,
         )
 
-    unmergeable = [g for g in groups if g.state in (BLOCKED, BROKEN)]
+    unread = [g for g in groups if g.unread]
+    if unread:
+        print(
+            f"\n{_n(len(unread), 'group')} could not be read from storage. Nothing in this "
+            "report is worth acting on until that is fixed -- a listing that fails looks exactly "
+            "like a delivered point whose staged files the merge deleted, and the remedy for "
+            "that state deletes `produced/` records.",
+            file=out,
+        )
+
+    unmergeable = [g for g in groups if g.state in (BLOCKED, BROKEN, UNKNOWN)]
     if unmergeable:
         shown = unmergeable if args.all else unmergeable[:DETAIL_LIMIT]
         print(f"\nnot mergeable ({_n(len(unmergeable), 'group')}):", file=out)
@@ -226,6 +289,16 @@ def report(args, groups, out=sys.stdout):
                 file=out,
             )
 
+    if total[BROKEN]:
+        print(
+            f"\n{_n(total[BROKEN], 'group')} recorded every seed but lost a staged file. "
+            "`NanoMergeTask` refuses those; deleting the seeds' `produced/` records produces them "
+            "again. Confirm that the merged file really is absent before deleting anything -- "
+            "these groups were read from listings that all answered, but a point that was merged "
+            "and then lost its merged file is indistinguishable from one that never merged.",
+            file=out,
+        )
+
     command = merge_command(args, groups)
     if command is None:
         print("\nnothing is ready to merge", file=out)
@@ -235,7 +308,18 @@ def report(args, groups, out=sys.stdout):
             file=out,
         )
 
+    if unread:
+        # not 2, which is argparse's own exit code for a bad option
+        return 3
     return 1 if total[BROKEN] else 0
+
+
+def positive_int(value):
+    """An `argparse` type that refuses 0 -- `ThreadPoolExecutor(max_workers=0)` raises."""
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {value}")
+    return n
 
 
 def main(argv=None):
@@ -266,10 +350,17 @@ def main(argv=None):
     )
     parser.add_argument(
         "--threads",
-        type=int,
+        type=positive_int,
         default=16,
         help="directory listings to run at once; latency-bound, raise it on a slow endpoint "
         "(default: %(default)s)",
+    )
+    parser.add_argument(
+        "--workflow",
+        default="crab",
+        choices=("crab", "htcondor", "local"),
+        help="backend to name in the printed merge command; law's own default is htcondor, so a "
+        "production on another backend must say so (default: %(default)s)",
     )
     parser.add_argument(
         "--all",
