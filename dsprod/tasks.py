@@ -1057,6 +1057,9 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 3.0)
 
+    #: `_runprod_index`, held on the workflow and shared by all of its branch tasks
+    _runprod_index_cache = None
+
     def create_branch_map(self):
         fpm = int(self.prod_setup.get("files_per_merge", 20))
         branches = {}
@@ -1071,10 +1074,25 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         return branches
 
     def _runprod_index(self):
-        return {
-            bd: i
-            for i, bd in enumerate(runprod_branches(self.prod_eras, self.prod_points))
-        }
+        """(era, point index, seed) -> `RunProd` branch id, built once per merge workflow.
+
+        Every merge branch needs the numbering of the *whole* production to locate its own seeds,
+        and law instantiates one task per branch: built per branch, that is the 4800-entry
+        `runprod_branches` list of a BPix era rebuilt for each of the era's 192 groups, in every
+        `requires()` call luigi makes on each of them. The workflow instance holds the single
+        copy -- a branch task shares its parameters (`exclude_params_workflow` is only `branch`),
+        so its numbering is the same one.
+        """
+        if self.is_branch():
+            return self.as_workflow()._runprod_index()
+        if self._runprod_index_cache is None:
+            self._runprod_index_cache = {
+                bd: i
+                for i, bd in enumerate(
+                    runprod_branches(self.prod_eras, self.prod_points)
+                )
+            }
+        return self._runprod_index_cache
 
     def required_runprod_branches(self):
         """`RunProd` branch ids of every seed in this merge workflow's *effective* branch map.
@@ -1198,10 +1216,13 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                         local_ins,
                         work_dir,
                     )
-                    n_out = run_step.count_events(vparams, out_local.abspath, work_dir)
-                    n_in = sum(
-                        run_step.count_events(vparams, p, work_dir) for p in local_ins
+                    # one invocation for the merged file and all of its inputs: entering the
+                    # nano release dominates the counting, so a 50-input group counted file by
+                    # file spent ~10 min of its 3 h slot before anything had been verified
+                    counts = run_step.count_events(
+                        vparams, [out_local.abspath] + local_ins, work_dir
                     )
+                    n_out, n_in = counts[0], sum(counts[1:])
                     if n_out != n_in:
                         raise RuntimeError(
                             f"nano merge entry mismatch: merged {n_out} != sum inputs {n_in}"

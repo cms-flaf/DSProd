@@ -188,6 +188,39 @@ class TestRequiredRunProdBranches(unittest.TestCase):
         self.assertEqual(len(required), 2 * SEEDS_PER_POINT)
 
 
+class TestTheRunProdIndexIsSharedByTheBranches(unittest.TestCase):
+    """Every merge branch needs the numbering of the whole production, and there is one of those.
+
+    `_runprod_index` inverts `runprod_branches`, a 4800-entry list for one BPix era, and
+    `requires()` calls it on each of the 192 branch tasks law instantiates -- several times per
+    task, since luigi asks for the requirements more than once.
+    """
+
+    def test_a_branch_gets_the_workflows_own_mapping(self):
+        workflow = merge_task()
+        index = workflow._runprod_index()
+        with mock.patch(
+            "dsprod.tasks.runprod_branches",
+            side_effect=AssertionError("the branch list was rebuilt for a branch task"),
+        ):
+            for branch in (0, 1, 191):
+                self.assertIs(workflow.as_branch(branch)._runprod_index(), index)
+
+    def test_a_branch_task_created_on_its_own_numbers_its_seeds_the_same_way(self):
+        # law instantiates a branch task directly on a worker, with no workflow next to it
+        alone = NanoMergeTask(setup=SETUP, eras=(ERA,), branch=0, workflow="local")
+        self.assertEqual(alone._runprod_index(), merge_task()._runprod_index())
+        era, pi, _, _, seeds = alone.branch_data
+        self.assertEqual(
+            sorted(alone.requires()),
+            seeds,
+        )
+        self.assertEqual(
+            [t.branch for t in alone.requires().values()],
+            [alone._runprod_index()[(era, pi, seed)] for seed in seeds],
+        )
+
+
 class TestTheSeedSelectionStopsAtRunProd(unittest.TestCase):
     """`RunProd`'s own requirements branch over gridpacks and eras, not over seeds.
 
