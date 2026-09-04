@@ -74,9 +74,9 @@ points:
     refused, because the check above divides by the setup's number while `RunProd` produces the
     point's. `NanoMergeTask` re-checks the same contract per group from the `produced/` records
     before merging, so a group whose seeds were produced at different sizes is refused rather than
-    merged into a file of the wrong size — the record's *requested* size is compared, since the
-    delivered count is not always identical (one Run3_2023 job returned 999 of its 1000 events,
-    leaving that merged file at 49 999).
+    merged into a file of the wrong size — the record's *requested* size is compared, because a
+    product made before the per-step assertion existed can hold fewer than it asked for (40 of the
+    166 merged Run3_2023 v12 files hold 49 998 or 49 999).
 | `points` | The physics points; their exact shape is defined by the process. `events_total` is **per era** — a mapping `{era: n}`, or a scalar to use the same number everywhere. |
 
 There is **no `gridpack:` field** and **no `crab:` block** — see below.
