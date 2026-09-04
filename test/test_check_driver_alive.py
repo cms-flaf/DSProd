@@ -4,8 +4,9 @@ The alarm runs from acron every 30 min, so a false report is expensive in a diff
 missed one: an operator who gets mail from a healthy production stops reading the mail. The cases
 below are the ones the live Run3_2023BPix production actually produces -- a poll gap of half an
 hour, a dump caught mid-write, a production that has finished, retries parked as unsubmitted by
-the CRAB wave gate, a handful of failures left behind at the tail, and a stall that lasts for days
-and must be reported once.
+the CRAB wave gate, a handful of failures left behind at the tail, a second process merging the
+part of the production that is already done, and a stall that lasts for days and must be reported
+once.
 """
 
 import contextlib
@@ -259,8 +260,10 @@ class TestNewestDumpWins(AlarmTestCase):
         old = self.area.add_dump(store="RunProd/a_era", age_minutes=40 * 60)
         fresh = self.area.add_dump(store="RunProd/b_era", age_minutes=3)
         for order in ([old, fresh], [fresh, old]):
-            found, _ = alarm.newest_job_dump(
-                self.tmp.name, glob_fn=lambda pattern, order=order: list(order)
+            found, _ = alarm.newest_dump_with_work(
+                alarm.job_dumps(
+                    self.tmp.name, glob_fn=lambda pattern, order=order: list(order)
+                )
             )
             self.assertEqual(found, fresh)
 
@@ -273,6 +276,48 @@ class TestNewestDumpWins(AlarmTestCase):
         )
         self.area.add_dump(store="RunProd/current_era", age_minutes=3 * 60)
         self.assertEqual(self.area.run()[0], 1)
+
+
+class TestASecondWorkflowInTheArea(AlarmTestCase):
+    """A merge run leaves a finished dump behind, and it must not answer for the whole area.
+
+    Merging the finished part of a production from a second process is a supported procedure
+    (`docs/operations/long-productions.md`), so the newest file under `data/*/*/crab_jobs_*.json`
+    is routinely a `NanoMergeTask` dump with every job finished. Keyed on the newest dump alone,
+    that file silenced the alarm for good -- and "the RunProd driver dies before the merge run
+    finishes" is the ordinary case in an area whose driver dies roughly daily.
+    """
+
+    def test_a_finished_merge_dump_does_not_excuse_a_stalled_production(self):
+        self.area.add_crab_project()
+        self.area.add_dump(store="RunProd/current_era", age_minutes=3 * 60)
+        self.area.add_dump(
+            store="NanoMergeTask/current_era",
+            name="crab_jobs_0To79_96To175.json",
+            age_minutes=1,
+            content=job_dump(jobs=[BaseJobManager.FINISHED] * 10),
+        )
+        code, text = self.area.run()
+        self.assertEqual(code, 1)
+        self.assertIn("no driver has polled RunProd", text)
+        # ... and it names the stalled workflow's dump, not the fresh one it ignored
+        self.assertIn("crab_jobs_0To4800.json", text)
+        self.assertNotIn("crab_jobs_0To79_96To175.json", text)
+
+    def test_a_workflow_being_polled_still_excuses_the_area(self):
+        # Deliberate, and the reason the newest dump with work is taken rather than the oldest: an
+        # area accumulates dumps from selections nobody drives any more (law never removes them),
+        # and any of those with a `running` job left in it would otherwise mail forever. The cost
+        # is that a gap in one workflow is masked while another is polled -- bounded by that run,
+        # because a finished dump stops excusing anything (the test above).
+        self.area.add_crab_project()
+        self.area.add_dump(store="RunProd/current_era", age_minutes=3 * 60)
+        self.area.add_dump(
+            store="NanoMergeTask/current_era",
+            name="crab_jobs_0To79.json",
+            age_minutes=2,
+        )
+        self.assertEqual(self.area.run(), (0, ""))
 
 
 if __name__ == "__main__":
