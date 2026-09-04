@@ -110,7 +110,7 @@ nano file.
 end a multi-day production while a short sample still fails the workflow.
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
-point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (2 by default), so
+point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (4 by default), so
 the job's core allocation is what cmsRun actually uses; a `nThreads` in the conditions overrides it
 per step. The proxy requirement is satisfied by the batch-delegated proxy
 inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). The number of seeds per point and era follows from
