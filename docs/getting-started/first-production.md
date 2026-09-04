@@ -52,4 +52,6 @@ law run RunProd --setup <setup>.yaml --workflow htcondor
 law run MakeGridpack --setup <setup>.yaml --workflow crab
 ```
 
-See [Backends](../concepts/backends.md) for what each one needs.
+See [Backends](../concepts/backends.md) for what each one needs, and
+[Driving a long production](../operations/long-productions.md) once a run is long enough to
+outlive the shell that started it.

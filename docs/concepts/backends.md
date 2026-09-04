@@ -63,6 +63,11 @@ Submits to the WLCG grid via [CRAB](https://twiki.cern.ch/twiki/bin/view/CMSPubl
 built on `law.contrib.cms.CrabWorkflow`. This is the backend for large-scale private production,
 where CERN HTCondor alone does not provide enough resources.
 
+A production on this backend runs for days, and the `law run` process driving it has died about
+once a day in practice, taking polling, resubmission and merging with it. Start it under
+[`run_tools/drive.sh`](../operations/long-productions.md) and watch it with
+`run_tools/check_driver_alive.py`.
+
 Because WLCG workers have **no AFS**, the DSProd code (plus `genproductions_scripts` and the
 vendored `law`/`luigi`) is shipped as a CRAB `inputFiles` tarball, built at submit time and
 unpacked by `bootstrap.sh`; CMSSW is set up from cvmfs on the worker. DSProd owns all output and
