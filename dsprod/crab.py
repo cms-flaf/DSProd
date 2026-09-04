@@ -18,6 +18,7 @@ backend. Only the compute knobs are configurable, in the merged global config
       # blacklist: [ ... ]       # optional; exclude sites that fail to reach the storage
       # parallel_jobs: 5000      # jobs per CRAB task / in flight; --parallel-jobs wins
       # refill_fraction: 0.2     # min wave size / free slots, as a fraction of parallel_jobs
+      # retry_release_minutes: 45  # a parked retry goes out after this long, whatever the wave
 """
 
 import fnmatch
@@ -82,6 +83,12 @@ _CRAB_DEFAULT_PARALLEL_JOBS = 5000
 #: free to take it. Without it law submits a fresh CRAB task as soon as a single job finishes or
 #: fails, producing hundreds of tiny tasks.
 _CRAB_DEFAULT_REFILL_FRACTION = 0.2
+
+#: how long a retry held back by the wave gate may wait before it goes out on its own, whatever
+#: the wave size. Waiting for a wave that a handful of retries cannot fill costs a full job length
+#: (7.1 h at the median) per retry generation: over a 4800-job production the parked retries
+#: waited 11.35 h at the median, ~10.5 h of the 68.4 h it took to reach 99.4 %.
+_CRAB_DEFAULT_RETRY_RELEASE_MINUTES = 45
 
 
 def build_code_tarball(ana_path, out_path):
@@ -508,6 +515,8 @@ class DSProdCrabWorkflowProxy(
 ):
     def __init__(self, *args, **kwargs):
         super(DSProdCrabWorkflowProxy, self).__init__(*args, **kwargs)
+        #: when the wave gate first parked a retry, or None while none is parked (see `submit`)
+        self._retry_parked_since = None
         self._apply_crab_parallel_jobs()
 
     def _apply_crab_parallel_jobs(self):
@@ -536,7 +545,24 @@ class DSProdCrabWorkflowProxy(
             frac = _CRAB_DEFAULT_REFILL_FRACTION
         return min(max(frac, 0.0), 1.0)
 
-    def _should_submit_crab_group(self, n_waiting):
+    def _crab_retry_release_minutes(self):
+        raw = self.task._crab_cfg().get(
+            "retry_release_minutes", _CRAB_DEFAULT_RETRY_RELEASE_MINUTES
+        )
+        try:
+            minutes = float(raw)
+        except (TypeError, ValueError):
+            minutes = _CRAB_DEFAULT_RETRY_RELEASE_MINUTES
+        return max(minutes, 0.0)
+
+    def _parked_retries_are_due(self):
+        """Whether the oldest retry parked by the wave gate has waited out its release window."""
+        if self._retry_parked_since is None:
+            return False
+        waited = time.time() - self._retry_parked_since
+        return waited >= self._crab_retry_release_minutes() * 60
+
+    def _should_submit_crab_group(self, n_backlog, n_retry):
         """Whether to submit now, or hold the jobs back so they accumulate into one CRAB task.
 
         Creating a CRAB task is expensive and a task holds only a few thousand jobs, so a
@@ -547,42 +573,80 @@ class DSProdCrabWorkflowProxy(
         tail of a large production and every small production (which can never fill a wave and so
         is never batched at all), while a trickle of retries early on still accumulates.
 
-        `n_waiting` (unsubmitted + jobs offered for retry) is what makes this an aggregation
-        threshold at all. Gating on free slots alone let a handful of retries out as their own CRAB
-        task whenever the production did not fill `parallel_jobs`: with 3270 of 5000 slots taken,
-        1730 were free, so the gate was open from the first poll onwards.
+        Waiting work is counted in two parts. `n_backlog` is what sits in `unsubmitted_jobs` --
+        never-submitted branches plus the retries a previous poll parked there -- and only it is
+        measured against the wave size; `n_retry` is the generation of retries this poll offers,
+        which has not waited for anything yet. Counting waiting work at all is what makes this an
+        aggregation threshold: gating on free slots alone let a handful of retries out as their own
+        CRAB task whenever the production did not fill `parallel_jobs` -- with 3270 of 5000 slots
+        taken, 1730 were free, so the gate was open from the first poll onwards.
+
+        A wave that is never reached must not park a retry for ever, though. Each generation a
+        retry misses costs a full job length -- 7.1 h at the median here -- and over a 4800-job
+        production the parked retries waited 11.35 h at the median for a wave that a handful of
+        them could not fill. So a retry that has been parked for `crab.retry_release_minutes` goes
+        out however small the wave it makes.
         """
         n_parallel = self.poll_data.n_parallel
         if n_parallel >= self.n_parallel_max:
             # unlimited parallelism: keep law's own behaviour
             return True
+        n_waiting = n_backlog + n_retry
         if n_waiting <= 0:
             return True
         n_active = self.poll_data.n_active
         min_wave = self._crab_refill_fraction() * n_parallel
         # a full-sized wave, and the room to run it
-        if min(n_waiting, n_parallel - n_active) >= min_wave:
+        if min(n_backlog, n_parallel - n_active) >= min_wave:
             return True
         # even if every job still running were to fail, the next wave could not reach the bar
-        return n_active + n_waiting < min_wave
+        if n_active + n_waiting < min_wave:
+            return True
+        return self._parked_retries_are_due()
 
     def submit(self, retry_jobs=None):
         # explicitly, and before the wave gate: holding jobs back below returns without
         # delegating to the mixin, which would let a mass retry through on a later wave
         self.stop_on_mass_initial_retry(retry_jobs)
         retry_jobs = retry_jobs or OrderedDict()
-        n_waiting = len(self.job_data.unsubmitted_jobs) + len(retry_jobs)
-        if self._should_submit_crab_group(n_waiting):
+        if self._should_submit_crab_group(
+            len(self.job_data.unsubmitted_jobs), len(retry_jobs)
+        ):
+            # law's submit() fills the wave up to `n_parallel` from `unsubmitted_jobs` whatever
+            # opened the gate, so a release on the timer takes the never-submitted backlog with
+            # it. That is wanted: the CRAB task is being created either way, and holding the
+            # backlog back would only earn it a task of its own later.
+            #
+            # It is also why the wait is cleared on every submission, not only when the parked
+            # retries actually went out. Whatever `unsubmitted_jobs` still holds afterwards is
+            # above `n_parallel`, i.e. has no free slot to start in, and it keeps its place at the
+            # front, so the next wave takes it first -- while a clock left running would open the
+            # gate on every poll and break a large production into one CRAB task per poll.
+            self._retry_parked_since = None
             return super(DSProdCrabWorkflowProxy, self).submit(retry_jobs or None)
 
         # park retries as unsubmitted, so the next eligible wave picks them up as one larger
         # CRAB task instead of creating a task for a handful of jobs now
         if retry_jobs:
+            parked = OrderedDict()
             for job_num, branches in retry_jobs.items():
                 if self._can_skip_job(job_num, branches):
                     continue
                 self.job_data.jobs.pop(job_num, None)
-                self.job_data.unsubmitted_jobs[job_num] = branches
+                parked[job_num] = branches
+            if parked:
+                if self._retry_parked_since is None:
+                    # the jobs are parked in `unsubmitted_jobs`, which is dumped to disk, and only
+                    # this timestamp is kept in memory: a driver killed while retries are parked
+                    # finds them again, and `JobData.__len__` keeps counting them as work for the
+                    # poll loop. The restart does restart the clock -- one release window of extra
+                    # waiting at worst, never a lost job.
+                    self._retry_parked_since = time.time()
+                # in front of the backlog, because law's submit() fills up to `n_parallel` in dict
+                # order: a retry appended behind tens of thousands of never-submitted branches
+                # would not be reached for hours, and the release above could not get it out
+                parked.update(self.job_data.unsubmitted_jobs)
+                self.job_data.unsubmitted_jobs = parked
             self.dump_job_data()
         return OrderedDict()
 

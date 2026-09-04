@@ -480,9 +480,16 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     # `RunProd` requirement (24 h, 4 CPUs) to run in 3 h on a single core, and 91 % of a 3270-job
     # CRAB task was killed on walltime. Workflow <-> branch conversion passes `_skip_task_excludes`,
     # so a value given on the command line still reaches the branches of the task it was given for.
+    #
+    # The failure budget (`RunProd.retries` / `RunProd.tolerance`) leaks the same way, and worse:
+    # `NanoMergeTask` carries law's defaults for both, so driving a production through the merge
+    # handed `RunProd` `tolerance=0.0` -- one job out of retries then killing the whole run -- and
+    # would silently drop a `--RunProd-retries` given on the command line.
     exclude_params_req = law.htcondor.HTCondorWorkflow.exclude_params_req | {
         "max_runtime",
         "n_cpus",
+        "retries",
+        "tolerance",
     }
 
     max_runtime = law.DurationParameter(
@@ -879,6 +886,29 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     # single-threaded job of this chain peaked at 3042 MB across a 3270-job production -- above
     # what a one-core slot offers -- while four cores would force a 10 GB request for no need.
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 2)
+
+    # 4 attempts per job: law submits a job once and then resubmits it `retries` times, so the
+    # budget a branch really burns is `retries + 1`. Every attempt after the first costs a
+    # generation of wall clock -- a job of this chain runs 7.1 h at the median -- so law's default
+    # of 5 buys a broken branch six generations, ~2 days, before it is finally called failed. Four
+    # is enough to walk away from a black-hole site (whose own quarantine needs 5 failures at that
+    # site to fire) while a branch that keeps dying is called failed in roughly a day.
+    retries = copy_param(HTCondorWorkflow.retries, 3)
+    # ... and 5 % of the branches may end up out of attempts without stopping the run. law's
+    # default of 0.0 means the FIRST branch to burn its budget raises `tolerance exceeded` and
+    # takes a multi-day production with it, 4799 finished jobs and all -- and with a 45-minute
+    # retry release window and 56 % of failures arriving in under 6 min, one bad site can spend a
+    # branch's four attempts in an afternoon. Only a branch that burns all four counts here, which
+    # a failing site rarely produces on its own (one host failed 258 of 3270 jobs and nearly all
+    # of them succeeded on a retry elsewhere), so 5 % is room for the unlucky ones; a production
+    # that is broken everywhere still stops within the hour, since every one of its branches is
+    # out of attempts by then.
+    #
+    # `acceptance` stays at law's 1.0, and that -- not `tolerance` -- is what forbids a silently
+    # short sample: the run keeps going past a failed branch, but once no job is left to finish,
+    # law reports `acceptance of N not reached` and the workflow fails. Rerunning it resubmits
+    # exactly the failed branches with a fresh budget (law keeps `_job_retries` in memory only).
+    tolerance = copy_param(HTCondorWorkflow.tolerance, 0.05)
 
     def create_branch_map(self):
         return dict(enumerate(runprod_branches(self.prod_eras, self.prod_points)))
