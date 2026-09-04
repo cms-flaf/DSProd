@@ -126,6 +126,43 @@ code is 50. `drive.sh` classifies them:
     — the only thing that lets a restart be automatic and safe — is gone the moment that option is
     set, for this driver and for any other supervision built later.
 
+## The failure budget
+
+A production is not allowed to die because one of its branches did.
+
+law counts attempts per job and failed jobs per workflow, and its defaults are made for short
+workflows: `retries: 5` and `tolerance: 0.0`, i.e. the **first** branch to run out of attempts
+raises `tolerance exceeded` and ends the run — 4799 finished jobs and all. `RunProd` therefore
+sets its own budget:
+
+| | value | meaning |
+|---|---|---|
+| `retries` | 3 | 4 attempts per branch: law submits a job once, then resubmits it `retries` times |
+| `tolerance` | 0.05 | up to 5 % of the branches may run out of attempts without ending the run |
+| `acceptance` | 1.0 | law's default, kept: **every** branch must finish for the workflow to succeed |
+
+Four attempts is enough to walk away from a black-hole site — its
+[quarantine](../concepts/backends.md#failing-sites) needs 5 failures at that site to fire — while a
+branch that keeps dying is called failed in roughly a day rather than occupying the two that six
+generations of a 7 h job would take.
+
+It is `acceptance`, not `tolerance`, that forbids a silently short sample: the run carries on past
+a failed branch, but once nothing is left to finish, law reports
+
+```
+acceptance of 4800 not reached, total jobs: 4800, failed jobs: 7
+```
+
+and the workflow fails with [code 40](#what-laws-exit-code-means), which `drive.sh` resumes. law
+keeps its retry counts in memory only, so the resumed leg hands each failed branch a fresh budget
+and resubmits it after one polling iteration. In other words: `tolerance` decides how much of a
+production may fail *before the driver gives up on the rest*, and a rerun is what finishes it.
+
+Both are ordinary law parameters, so a run can override them — `--RunProd-retries 8`,
+`--RunProd-tolerance 0.1`. Address `RunProd` by name: like `--max-runtime` and `--n-cpus`, neither
+is passed on to or taken from the tasks around it, which is what keeps `NanoMergeTask` from handing
+its `RunProd` requirement law's `tolerance: 0.0` back.
+
 ## The staleness alarm
 
 `drive.sh` cannot report its own death, so the alarm lives outside it:
@@ -186,5 +223,6 @@ production writes `htcondor_jobs_*.json` and has no project directories to key o
 !!! note "Supervision was the largest term, not the only one"
     The same 68.4 h also contains ~10.5 h of retries held back by the wave gate (median parking
     11.35 h) and four serialised retry generations of genuinely long jobs. Keeping the driver alive
-    does not shorten those, and 169 of 192 merge groups being complete with none merged is a
-    scheduling question in `NanoMergeTask`, not a supervision one.
+    does not shorten those: the parking is what the
+    [release timer](../concepts/backends.md#job-waves) addresses, and 169 of 192 merge groups being
+    complete with none merged is a scheduling question in `NanoMergeTask`, not a supervision one.

@@ -99,6 +99,7 @@ crab:
   max_cores: 4          # ceiling on a job's cores; caps each task's own n_cpus
   # parallel_jobs: 5000     # jobs per CRAB task / in flight
   # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
+  # retry_release_minutes: 45  # release a parked retry after this long, whatever the wave size
 ```
 
 !!! note "No CRAB output location"
@@ -123,7 +124,12 @@ a wave, waiting could only delay it, so whatever is waiting goes out at once, ho
 is. `parallel_jobs` set to unlimited (`--parallel-jobs 0`) bypasses all of this and restores law's
 own behaviour.
 
-Two consequences worth knowing:
+What is measured against the bar is the **waiting backlog** — never-submitted branches plus the
+retries already held back. A generation of retries offered by the current poll is parked first and
+counted on the next one, so it is never the retries themselves that open the gate before they have
+waited for anything.
+
+Three consequences worth knowing:
 
 - **Small productions are never batched.** A 12-job production can never fill a wave, so a job that
   fails there is resubmitted on the next poll, exactly as before.
@@ -131,10 +137,21 @@ Two consequences worth knowing:
   production is still busy; they are released as soon as fewer than one wave of work remains, not
   when the last job finishes. A 3270-job production that loses 226 jobs early runs as two CRAB
   tasks, with the retries going out around three quarters of the way through.
+- **A parked retry is released on a timer** after `crab.retry_release_minutes` (default 45),
+  whatever the wave size. Waiting for a wave that a handful of retries cannot fill costs a full
+  job length per retry generation: over the 4800-branch Run3_2023BPix production the parked
+  retries waited **11.35 h at the median**, ~10.5 h of the 68.4 h it took to reach 99.4 %. Set it
+  to `0` to let every retry out on the next poll. Only the waiting *time* lives in the driver's
+  memory — the parked jobs themselves are in the submission file — so a restarted driver restarts
+  the clock, which costs at most one more window and never loses a job.
 
-This applies to retries and to never-submitted jobs alike. Without the size bar, law creates a
-fresh CRAB task the moment a single job finishes or fails — that 3270-job production produced a
-second, 226-job CRAB task ten minutes in.
+Once a wave does go out, law fills it up to `parallel_jobs` from the backlog whatever opened the
+gate — so a release on the timer takes as many never-submitted branches with it as there are free
+slots. The CRAB task is being created either way, and the parked retries are at the front of the
+queue, so they are in it.
+
+Without the size bar, law creates a fresh CRAB task the moment a single job finishes or fails —
+that 3270-job production produced a second, 226-job CRAB task ten minutes in.
 
 ### Site selection
 
