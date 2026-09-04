@@ -112,10 +112,18 @@ end a multi-day production while a short sample still fails the workflow.
 Every step asserts that its output holds exactly the `-n` events it was asked for, counted in the
 release that wrote it. `-n` is only a request: a step that returns fewer produces a valid file, each
 later step carries the shortfall forward, and the merge only ever compared a group with the sum of
-its own inputs — so of the 166 merged Run3_2023 v12 files, 48 were delivered holding 49 998 or
+its own inputs — so of the 166 merged Run3_2023 v12 files, 40 were delivered holding 49 998 or
 49 999 events while advertising 50 000. Checking per step is what says *where* the events went;
 entering the release to count costs seconds against a step measured in hours. A generator that
 filtered events would legitimately return fewer, and no DSProd process does that today.
+
+Those 40 files were a **generator** defect rather than a framework one, which is also what the
+assertion is for: a fragment that lets Pythia sample an off-shell W/Z below its undecayable floor
+of 0.1 GeV loses the events it cannot decay — about one in 10^5, so one job in a hundred — and the
+LHE file then runs dry one event early. The X_HH fragments keep `mMin` above that floor, so the
+count a job is asked for is one it can deliver. If the assertion does fire, expect a cause of that
+kind and not a transient one: the seed replays the same events, so re-running the branch reproduces
+the shortfall exactly.
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
 point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (4 by default), so
