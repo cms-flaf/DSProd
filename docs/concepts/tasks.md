@@ -105,6 +105,10 @@ the whole era (law marks such jobs `initially missing task outputs`). Nothing de
 so completeness survives the merge. To redo a seed deliberately, delete its record along with its
 nano file.
 
+`RunProd` carries its own [failure budget](../operations/long-productions.md#the-failure-budget)
+(`retries: 3`, `tolerance: 0.05`, `acceptance: 1.0`) rather than law's, so one dead branch cannot
+end a multi-day production while a short sample still fails the workflow.
+
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
 point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (2 by default), so
 the job's core allocation is what cmsRun actually uses; a `nThreads` in the conditions overrides it

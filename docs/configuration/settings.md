@@ -68,6 +68,7 @@ crab:
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
   # parallel_jobs: 5000             # optional; jobs per CRAB task / in flight
   # refill_fraction: 0.2            # optional; min wave size, as a fraction of parallel_jobs
+  # retry_release_minutes: 45       # optional; release a parked retry after this long
   # auto_blacklist: { ... }         # optional; see Backends -> Failing sites (on by default)
 ```
 
@@ -86,7 +87,8 @@ command line (e.g. `--crab-whitelist`, `--crab-memory`).
 processing site. The CRAB client insists on a `Site.whitelist` whenever `ignoreLocality` is set, so
 an unset one becomes `T1_*`, `T2_*`, `T3_*` — the widest pool it accepts; configuring one can only
 narrow it. See [Backends](../concepts/backends.md#site-selection) for when restricting is
-worthwhile, and [Job waves](../concepts/backends.md#job-waves) for `parallel_jobs`/`refill_fraction`.
+worthwhile, and [Job waves](../concepts/backends.md#job-waves) for
+`parallel_jobs`/`refill_fraction`/`retry_release_minutes`.
 
 !!! note "On grid workers"
     Being git-ignored does not mean being absent from jobs: the CRAB code tarball ships the whole
