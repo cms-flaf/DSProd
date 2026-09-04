@@ -109,6 +109,14 @@ nano file.
 (`retries: 3`, `tolerance: 0.05`, `acceptance: 1.0`) rather than law's, so one dead branch cannot
 end a multi-day production while a short sample still fails the workflow.
 
+Every step asserts that its output holds exactly the `-n` events it was asked for, counted in the
+release that wrote it. `-n` is only a request: a step that returns fewer produces a valid file, each
+later step carries the shortfall forward, and the merge only ever compared a group with the sum of
+its own inputs — so of the 166 merged Run3_2023 v12 files, 48 were delivered holding 49 998 or
+49 999 events while advertising 50 000. Checking per step is what says *where* the events went;
+entering the release to count costs seconds against a step measured in hours. A generator that
+filtered events would legitimately return fewer, and no DSProd process does that today.
+
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
 point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (4 by default), so
 the job's core allocation is what cmsRun actually uses; a `nThreads` in the conditions overrides it
@@ -137,7 +145,9 @@ is where ROOT prints its own warnings, so nothing may be read off it by position
 
 Before merging, the group's job size is checked against the `events_requested` field of the seeds'
 `produced/` records, so a group mixing seeds produced at different sizes is refused rather than
-delivered as a file of an unadvertised size. It takes the input paths from the grouping itself, not from what `RunProd`
+delivered as a file of an unadvertised size; afterwards the merged file is checked against the size
+those seeds were produced for, which — since every step delivers its `-n` exactly — can only fail
+if the merge itself lost events. It takes the input paths from the grouping itself, not from what `RunProd`
 declares (that is the record), and refuses to run if a staged file of its group is gone although
 its seed is recorded as produced. Output is the final, FLAF-facing file:
 
