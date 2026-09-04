@@ -6,9 +6,16 @@ complete and none had merged, because `NanoMergeTask.workflow_requires()` requir
 `RunProd` workflow. Narrowing it to the seeds of the groups actually being merged is what these
 tests pin down -- including the numbering, since law copies `branches` through `req()` and
 `--branches 5` on the merge therefore used to ask for *RunProd* branch 5 rather than for the 50
-seeds of merge group 5.
+seeds of merge group 5, and one level further down asked `MakeGridpack` for gridpacks by seed
+number.
+
+The report has its own failure to answer for: a listing that fails and a directory that is not
+there are the same answer at the gfal layer, and reading the first as the second turned a
+delivered point into an instruction to produce its seeds again.
 """
 
+import argparse
+import contextlib
 import os
 import shutil
 import sys
@@ -47,11 +54,13 @@ SEEDS_PER_POINT = 150
 
 _tmp = None
 _fs_patcher = None
+_env_before = {}
 
 
 def setUpModule():
     """Point `fs_default` at a local directory, so no test needs a VOMS proxy or the endpoint."""
     global _tmp, _fs_patcher
+    _env_before["ANALYSIS_DATA_PATH"] = os.environ.get("ANALYSIS_DATA_PATH")
     _tmp = tempfile.mkdtemp(prefix="dsprod_merge_test_")
     os.environ["ANALYSIS_DATA_PATH"] = os.path.join(_tmp, "data")
     _fs_patcher = mock.patch(
@@ -63,6 +72,12 @@ def setUpModule():
 
 def tearDownModule():
     _fs_patcher.stop()
+    # restored, or a module discovered after this one inherits a data path in a deleted tmpdir
+    for name, value in _env_before.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     shutil.rmtree(_tmp, ignore_errors=True)
 
 
@@ -70,6 +85,15 @@ def merge_task(**kwargs):
     """The merge workflow over one full era of the real setup."""
     kwargs.setdefault("workflow", "htcondor")
     return NanoMergeTask(setup=SETUP, eras=(ERA,), **kwargs)
+
+
+def report_args(points="", **kwargs):
+    """What `merge_status.main` would hand `report` and `merge_command`."""
+    defaults = dict(
+        setup=SETUP, eras=ERA, points=points, test=0, all=False, workflow="crab"
+    )
+    defaults.update(kwargs)
+    return Namespace(**defaults)
 
 
 class TestRequiredRunProdBranches(unittest.TestCase):
@@ -164,6 +188,92 @@ class TestRequiredRunProdBranches(unittest.TestCase):
         self.assertEqual(len(required), 2 * SEEDS_PER_POINT)
 
 
+class TestTheSeedSelectionStopsAtRunProd(unittest.TestCase):
+    """`RunProd`'s own requirements branch over gridpacks and eras, not over seeds.
+
+    law copies `branches` through `req()`, so a seed range arrived at `MakeGridpack` as a gridpack
+    range: `--branches 10:20` asked for gridpacks 10-19 while seed 10 needs gridpack 0, and the
+    requirement was then satisfied by a workflow that never builds it -- the branch job would find
+    the gridpack missing on the worker and refuse to generate it there. The same range dropped the
+    premix list of every era outside it. `req_different_branching` is what stops the copy.
+    """
+
+    def runprod(self, **kwargs):
+        kwargs.setdefault("eras", (ERA,))
+        return RunProd(setup=SETUP, workflow="htcondor", **kwargs)
+
+    def test_a_seed_range_does_not_select_gridpacks(self):
+        gridpack = self.runprod(branches=((10, 20),)).workflow_requires()["gridpack"]
+        self.assertEqual(gridpack.branches, ())
+        self.assertEqual(
+            sorted(gridpack.get_branch_map()),
+            sorted(self.runprod().workflow_requires()["gridpack"].get_branch_map()),
+        )
+        # the gridpack seed 10 really needs, which the leaked range 10-19 did not contain
+        branch = self.runprod(branch=10)
+        _, pi, _ = branch.branch_data
+        needed = branch.gridpack_index()[
+            branch.process.gridpack_name(branch.prod_points[pi])
+        ]
+        self.assertEqual(needed, 0)
+        self.assertIn(needed, gridpack.get_branch_map())
+
+    def test_a_seed_range_does_not_drop_an_era_from_the_era_wide_requirements(self):
+        # over every era of the setup, so the leaked range overlaps these maps rather than falling
+        # outside them, which law would collapse back to "all branches"
+        selected = RunProd(setup=SETUP, workflow="htcondor", branches=((1, 3),))
+        reqs = selected.workflow_requires()
+        for name in ("cmssw", "premix"):
+            self.assertEqual(reqs[name].branches, ())
+            self.assertEqual(len(reqs[name].get_branch_map()), len(selected.prod_eras))
+
+    def test_the_merge_selection_does_not_select_gridpacks_either(self):
+        runprod = merge_task(branches=(6, (7, 8))).workflow_requires()["runprod"]
+        self.assertEqual(runprod.branches, ((150, 250),))
+        self.assertEqual(runprod.workflow_requires()["gridpack"].branches, ())
+
+
+class TestTheNarrowedRequirementIsSatisfiedEarly(unittest.TestCase):
+    """The point of the change: a group's requirement is complete long before the workflow is.
+
+    On the two `*_M-250` points (300 seeds) rather than the whole era, so that the incompleteness
+    of the generation stage does not cost 9600 target lookups to establish.
+    """
+
+    POINTS = ("*_M-250",)
+
+    def setUp(self):
+        self.store = os.path.join(_tmp, "store", "XHHbbWW")
+        shutil.rmtree(self.store, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.store, True)
+
+    def test_one_group_of_seeds_is_enough_to_merge_it(self):
+        # the records of merge branch 1 only: seeds 51-100 of the first point, both versions
+        for version in ("v12", "v15"):
+            for seed in range(51, 101):
+                path = os.path.join(
+                    self.store,
+                    "produced",
+                    f"nanoAOD_{version}",
+                    ERA,
+                    FIRST_POINT,
+                    f"nano_{version}_{seed}.json",
+                )
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write("{}")
+
+        task = merge_task(points=self.POINTS, branches=(1,))
+        self.assertEqual(task.required_runprod_branches(), list(range(50, 100)))
+        self.assertTrue(task.workflow_requires()["runprod"].complete())
+        # ... while the generation stage this used to wait for is 250 of its 300 seeds short
+        self.assertFalse(
+            RunProd(
+                setup=SETUP, eras=(ERA,), points=self.POINTS, workflow="local"
+            ).complete()
+        )
+
+
 class TestClassifyGroup(unittest.TestCase):
     """Readiness of one merge group, from the three directory listings of its point."""
 
@@ -232,6 +342,58 @@ class TestClassifyGroup(unittest.TestCase):
             ),
         )
         self.assertEqual((state, missing, gone), (merge_status.BROKEN, 0, 1))
+
+    def test_an_unreadable_merged_listing_never_reads_as_broken(self):
+        # the state of every delivered point -- records kept, staged files deleted by the merge --
+        # is what `broken` looks like without the merged listing, and `broken` is the state whose
+        # remedy deletes `produced/` records. One timed-out listing must not advise regenerating
+        # 50 seeds that are already merged.
+        seeds = list(range(1, 51))
+        state, _, _ = merge_status.classify_group(
+            "v12",
+            0,
+            seeds,
+            merge_status.Listing(
+                merged=None,
+                records=set(self.names("v12", seeds, "json")),
+                staged=set(),
+            ),
+        )
+        self.assertEqual(state, merge_status.UNKNOWN)
+
+    def test_an_unreadable_staged_listing_never_reads_as_ready(self):
+        seeds = list(range(1, 51))
+        state, _, _ = merge_status.classify_group(
+            "v12",
+            0,
+            seeds,
+            merge_status.Listing(
+                merged=set(), records=set(self.names("v12", seeds, "json")), staged=None
+            ),
+        )
+        self.assertEqual(state, merge_status.UNKNOWN)
+
+    def test_a_missing_record_still_settles_a_group_without_the_other_listings(self):
+        # a merged group keeps every record, so a missing one rules `merged` out on its own -- and
+        # a production nobody has started yet must keep reporting the state that says so
+        seeds = list(range(1, 51))
+        state, missing, _ = merge_status.classify_group(
+            "v12",
+            0,
+            seeds,
+            merge_status.Listing(merged=None, records=set(), staged=None),
+        )
+        self.assertEqual((state, missing), (merge_status.BLOCKED, len(seeds)))
+
+    def test_a_merged_file_answers_even_when_the_other_listings_failed(self):
+        seeds = list(range(1, 51))
+        state, _, _ = merge_status.classify_group(
+            "v12",
+            3,
+            seeds,
+            merge_status.Listing(merged={"nano_v12_3.root"}, records=None, staged=None),
+        )
+        self.assertEqual(state, merge_status.MERGED)
 
     def test_a_group_is_read_per_version(self):
         # the two versions of a point share a directory level but not their files: v15 group 0
@@ -345,31 +507,90 @@ class TestClassifyAgainstStorage(unittest.TestCase):
         # first point v12 groups 0 and 1 ready (seeds 1-100), second point v15 group 0 ready
         self.stage("v12", FIRST_POINT, range(1, 101))
         self.stage("v15", "GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-250", range(1, 51))
-        args = Namespace(
-            setup=SETUP, eras=ERA, points=",".join(self.POINTS), test=0, all=False
-        )
+        args = report_args(points=",".join(self.POINTS))
         groups = merge_status.classify(self.task, threads=4)
         command = merge_status.merge_command(args, groups)
         self.assertIn("--branches 0:2,9", command)
         self.assertIn(f"--points '{self.POINTS[0]}'", command)
+        # law's own default is htcondor, so a crab production that pastes this line unchanged
+        # would otherwise submit to the wrong backend and poll a different job-data file
+        self.assertIn("--workflow crab", command)
 
+        # the string as pasted, parsed by law's own `branches` parameter rather than by hand
+        selection = NanoMergeTask.branches.parse(
+            command.split("--branches ")[1].split(" ")[0]
+        )
         restricted = NanoMergeTask(
             setup=SETUP,
             eras=(ERA,),
             points=self.POINTS,
             workflow="local",
-            branches=((0, 2), 9),
+            branches=selection,
         )
         self.assertEqual(
             sorted(restricted.get_branch_map()),
             sorted(g.branch for g in groups if g.state == merge_status.READY),
         )
 
+    def test_a_delivered_point_survives_one_failed_listing(self):
+        # every group of the point produced and merged, staged files removed by the merge; then a
+        # single transient failure on its merged listing. Reported as `broken`, the report told
+        # the operator to delete 300 records accounting for 6 delivered files.
+        for version in ("v12", "v15"):
+            self.stage(version, FIRST_POINT, range(1, 151), staged=False)
+            for group in range(3):
+                self.put(
+                    f"nanoAOD_{version}",
+                    ERA,
+                    FIRST_POINT,
+                    f"nano_{version}_{group}.root",
+                )
+
+        merged_dirs = {
+            self.task.merged_nano_target(
+                ERA, self.task.prod_points[0], v, 0
+            ).parent.path
+            for v in ("v12", "v15")
+        }
+        real_listdir = law.LocalDirectoryTarget.listdir
+
+        def flaky(target, *args, **kwargs):
+            # gfal-ls exits non-zero on a transient error exactly as it does on a missing
+            # directory, which is the whole ambiguity this has to survive
+            if target.path in merged_dirs:
+                raise OSError("gfal-ls: transient: Connection timed out")
+            return real_listdir(target, *args, **kwargs)
+
+        args = report_args(points=",".join(self.POINTS), all=True)
+        out = StringIO()
+        with mock.patch.object(law.LocalDirectoryTarget, "listdir", flaky):
+            code = merge_status.report(
+                args, merge_status.classify(self.task, threads=4), out=out
+            )
+        text = out.getvalue()
+        self.assertEqual(code, 3)
+        self.assertIn("unknown 6", text)
+        self.assertIn("broken 0", text)
+        self.assertIn("merged could not be listed", text)
+        # ... and not one word about staged files being gone, whose remedy deletes records
+        self.assertNotIn("seeds recorded but", text)
+
+    def test_a_directory_that_is_not_there_is_still_blocked(self):
+        # nothing produced yet: the states must not all turn `unknown` because no directory of
+        # the production exists, which is what a report of a fresh area reads
+        out = StringIO()
+        code = merge_status.report(
+            report_args(points=",".join(self.POINTS)),
+            merge_status.classify(self.task, threads=4),
+            out=out,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("blocked 12", out.getvalue())
+        self.assertIn("nothing of this production is on fs_default", out.getvalue())
+
     def test_a_broken_group_makes_the_report_exit_nonzero(self):
         self.stage("v12", FIRST_POINT, range(1, 51), staged=False)
-        args = Namespace(
-            setup=SETUP, eras=ERA, points=",".join(self.POINTS), test=0, all=False
-        )
+        args = report_args(points=",".join(self.POINTS))
         out = StringIO()
         code = merge_status.report(
             args, merge_status.classify(self.task, threads=4), out=out
@@ -377,6 +598,44 @@ class TestClassifyAgainstStorage(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("broken 1", out.getvalue())
         self.assertIn("nothing is ready to merge", out.getvalue())
+
+
+class TestTheReportCommandLine(unittest.TestCase):
+    """Boundary values of the report's own options: it is run by hand, on a bad day."""
+
+    def test_no_threads_is_refused_rather_than_raising_from_the_pool(self):
+        # ThreadPoolExecutor(max_workers=0) raises `ValueError: max_workers must be greater
+        # than 0`, which reads as a crash in the tool rather than as a bad option
+        for value in ("0", "-1"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                merge_status.positive_int(value)
+        self.assertEqual(merge_status.positive_int("1"), 1)
+
+    def test_an_unknown_backend_is_refused_before_storage_is_touched(self):
+        # the value goes straight into the printed `law run` line, so a typo there would be
+        # pasted into a production command
+        with contextlib.redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                merge_status.main(["--setup", SETUP, "--workflow", "condor"])
+
+
+class TestAnEmptySeedUnionIsRefused(unittest.TestCase):
+    """`branches=()` means *all* branches to law, so an empty union must not be handed over.
+
+    Not reachable through the shipped branch maps -- `--points`/`--eras` matching nothing is
+    already refused by `select_by_pattern`, and every group carries at least one seed -- but the
+    failure it would cause is the one this change exists to remove: the merge silently waiting for
+    the whole generation stage again.
+    """
+
+    def test_a_union_that_came_out_empty_raises_instead(self):
+        task = merge_task(branches=(0,))
+        with mock.patch.object(
+            task, "get_branch_map", return_value={0: (ERA, 0, "v12", 0, [])}
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                task.required_runprod_branches()
+        self.assertIn("not one seed", str(caught.exception))
 
 
 class Sentinel(Exception):

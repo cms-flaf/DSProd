@@ -195,11 +195,21 @@ acrontab -e
 */30 * * * * lxplus.cern.ch <checkout>/run_tools/check_driver_alive.py --area <production area>
 ```
 
-The liveness signal is the newest `data/*/*/crab_jobs_*.json`. law rewrites that dump on every poll
-iteration, so its mtime is the one piece of driver state visible from any machine that can read the
-area. The name carries the workflow's branch range and there is one per store directory, so it is
-found by globbing rather than by name, and a read that catches it half-written is treated as a
-driver at work, not as a fault.
+The liveness signal is the newest `data/*/*/crab_jobs_*.json` **that still has jobs to drive**. law
+rewrites that dump on every poll iteration, so its mtime is the one piece of driver state visible
+from any machine that can read the area. The name carries the workflow's branch range and there is
+one per store directory and branch selection, so it is found by globbing rather than by name, and a
+read that catches it half-written is treated as a driver at work, not as a fault.
+
+"Still has jobs to drive" is what keeps a second workflow from answering for the whole area.
+[Merging the finished part](#merging-while-the-production-runs) of a production leaves a
+`data/NanoMergeTask/<store>/crab_jobs_*.json` behind whose every job is `finished`; keyed on the
+newest dump alone, that settled file was newer than the stalled `RunProd` dump next to it and the
+alarm went quiet for good. Conversely, a workflow that *is* being polled still excuses the area:
+an area accumulates dumps from selections nobody drives any more (law never removes them), and
+alarming on the oldest of those with a `running` job left in it would mail for ever. So a gap in
+one workflow is masked while another is polled — bounded by that run, since a finished dump stops
+excusing anything. The report names the workflow it found stalled.
 
 The default threshold is **45 minutes** — deliberately not a multiple of `poll_interval` (5 min).
 Measured gaps between polls in the live production are 5.3 min at the median, 12.1 min at p90 and
@@ -211,8 +221,8 @@ Two situations are silence, not health, and are treated as such:
 
 - **nothing to drive** — an area with no CRAB project directory under `data/jobs/` never submitted
   to the grid, so there is no driver to miss;
-- **a finished production** — when the newest dump says every job is `finished` and none are
-  waiting, its mtime only gets older and means nothing.
+- **a finished production** — when every dump in the area says every job is `finished` and none
+  are waiting, their mtimes only get older and mean nothing.
 
 A job the dump calls `failed` is **work**, not an end. law keeps its retry counts per process
 (`_job_retries`, `law/workflow/remote.py`) and never reads them back from the dump, so a restarted
@@ -252,16 +262,27 @@ the line it prints:
 ```bash
 run_tools/merge_status.py --setup <setup> --eras Run3_2023BPix
 # ... then, as printed:
-law run NanoMergeTask --setup <setup> --eras 'Run3_2023BPix' --branches 0:78,96:174
+law run NanoMergeTask --setup <setup> --eras 'Run3_2023BPix' --branches 0:78,96:174 \
+    --workflow crab
 ```
 
 The branch numbers are only valid for the selection they were computed for, so pass the same
 `--eras` / `--points` / `--test` to both. `merge_status.py` reads storage only — it is safe to run
-against an area someone else is driving — and its four states, exit codes and cost are described
+against an area someone else is driving — and its five states, exit codes and cost are described
 with the [task](../concepts/tasks.md#which-groups-can-be-merged).
 
-Merging from a **second** process while a driver is running the same production is the one thing
-to avoid: a narrowed merge run keeps its own `RunProd` job-data file, so any seed it finds missing
-would be submitted a second time under a second set of job ids. Either merge from the same driver
-(`law run NanoMergeTask` instead of `law run RunProd` — it requires the generation stage anyway),
-or merge only groups the report calls `ready`, which by definition need no submission at all.
+**Merge only groups the report calls `ready`.** That is what makes running this alongside the
+driver safe, and it is why the printed line is *not* wrapped in `drive.sh`: the
+[lock](#the-lock) exists to keep two processes from submitting the same `RunProd` seeds, and
+`drive.sh` would refuse to start (exit 4) while the production holds it. A `ready` group has every
+seed's `produced/` record on storage, so its `RunProd` requirement is already complete and nothing
+of the generation stage can be submitted; the merge jobs themselves live in
+`data/NanoMergeTask/<store>/`, which no other process writes. Hand-editing the printed
+`--branches` to include a `blocked` group is what breaks that — those seeds would be submitted a
+second time under a second set of job ids, and a `RunProd` job that starts inside a merge slot
+[refuses to generate](../concepts/tasks.md#runprod) anyway.
+
+Driving the merge instead of `RunProd` (`law run NanoMergeTask` with no `--branches`) is a
+different thing and merges nothing early: it requires every `RunProd` branch, which law collapses
+back to "all branches", so the first merge happens once the last seed of the selection is done —
+the 169-of-192 stall this section exists to avoid.

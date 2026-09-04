@@ -144,19 +144,27 @@ merged while the other 4750 of the era are still being produced. The requirement
 entire `RunProd` workflow, and that is how the Run3_2023BPix production reached 169 of its 192
 groups complete with not one merged.
 
-Two consequences to know about:
+Three consequences to know about:
 
 - Asking for the whole merge (no `--branches`) requires every `RunProd` branch, which law
   collapses back to "all branches" — so a production driven through `NanoMergeTask` polls the
-  same job data as `law run RunProd` itself, `data/RunProd/<store>/<backend>_jobs_0To<n>.json`. A
-  **narrowed** merge run instead gets its own job-data file in that same directory, named after
-  the branch ranges it requires (`crab_jobs_0To51_100To251.json`). Two drivers in one area would
-  then submit the same seeds twice under two sets of job ids, which is what `drive.sh`'s
-  [lock](../operations/long-productions.md#the-lock) is for. Neither the store directory nor any
-  product path depends on the selection.
+  same job data as `law run RunProd` itself, `data/RunProd/<store>/<backend>_jobs_0To<n>.json`,
+  and merges only once the last seed of the selection is done. A **narrowed** merge run instead
+  gets its own job-data file, named after the branch ranges it requires
+  (`crab_jobs_0To51_100To251.json`). It lands in the same `data/RunProd/<store>/` directory only
+  when it is given the same `--eras` / `--points` / `--test` as the driver: `store_parts()`
+  appends a slug and hash of those, so a merge run narrowed by `--eras` while the production is
+  driven without it keeps a *separate* set of job ids for the same seeds. Either way, two
+  processes that can submit `RunProd` must not run in one area — that is what `drive.sh`'s
+  [lock](../operations/long-productions.md#the-lock) is for. The product paths themselves do not
+  depend on any selection.
 - `--branches` on the merge selects **merge groups** and asks for the seeds behind them. It used
   to hand the merge's own branch numbers to `RunProd` as if they were seeds, so `--branches 5`
   waited on `RunProd` branch 5 rather than on the 50 seeds of group 5.
+- A seed selection stops at `RunProd`. Its own requirements branch over gridpacks and eras, so
+  law copying `branches` one level further meant `--branches 10:20` asked `MakeGridpack` for
+  gridpacks 10–19 — while seed 10 needs gridpack 0, whose absence the requirement then never
+  noticed — and dropped the premix list of every era outside the range.
 
 #### Which groups can be merged
 
@@ -172,21 +180,35 @@ Reports every merge group of the selection as one of
 | `ready` | every seed has a `produced/` record **and** its staged nano file |
 | `blocked` | at least one seed has no record yet — `RunProd` still owes it |
 | `broken` | every seed is recorded but a staged file is gone and the group is not merged |
+| `unknown` | a listing this group's state depends on could not be read |
 
-and prints the `law run NanoMergeTask … --branches <ranges>` line that merges exactly the ready
-ones, which is what makes merging part of a production a supported procedure rather than folklore.
-It exits 0 normally and 1 when a group is `broken` — the state `NanoMergeTask` refuses to run on
-(its merged file was removed after the fact); delete the affected seeds' `produced/` records so
-they are produced again. `--all` lists every unmergeable group instead of the first 20, and the
+and prints the `law run NanoMergeTask … --branches <ranges> --workflow <backend>` line that merges
+exactly the ready ones, which is what makes merging part of a production a supported procedure
+rather than folklore. The backend is printed because law's own default is `htcondor`, so a CRAB
+production that pasted the line unchanged would submit to the wrong one; `--workflow` on the report
+(default `crab`) picks it. `--all` lists every unmergeable group instead of the first 20, and the
 same `--eras` / `--points` / `--test` selectors as the tasks take apply, since the branch numbers
 it prints are only valid for the same selection.
 
+Exit codes: **0** normally, **1** when a group is `broken`, **3** when a listing could not be read
+(not 2 — that is what a bad option exits with).
+`NanoMergeTask` refuses a `broken` group, and deleting the affected seeds' `produced/` records
+produces them again — but confirm that the merged file really is absent before deleting anything.
+A group that was merged and then lost its merged file looks exactly like one that never merged.
+
 It reads storage with three directory listings per (era, point, nano version) — the merged files,
-the records, the staged nanos — `--threads` of them at a time (16 by default), never a stat per
-seed: a full era is thousands of seeds per version, and at one remote round trip each the stats
-alone run for hours. Because a failed listing and a missing directory are indistinguishable at
-that layer, a report that finds *nothing at all* says so and points at the endpoint and the proxy
-rather than claiming the production is unproduced.
+the records, the staged nanos — `--threads` of them at a time (16 by default, and 0 is refused
+rather than passed to the thread pool), never a stat per seed: a full era is thousands of seeds per
+version, and at one remote round trip each the stats alone run for hours.
+
+`gfal-ls` exits non-zero on a transient error exactly as it does on a directory that is not there,
+so a listing that fails is followed by an existence check and only a directory that answers "not
+there" is read as empty. Everything else is `unknown`, and that matters most for the *merged*
+listing: a delivered point keeps its records and has its staged files deleted by the merge, which
+is precisely what `broken` looks like without it. Without that check, a single failed listing on a
+fully merged point reclassified all six of its groups as `broken`, whose remedy would have deleted
+300 records accounting for six delivered files. A report that finds nothing at all anywhere still
+says so, and points at the endpoint, the proxy and the setup's `output` name.
 
 ### `BackfillProducedRecords`
 

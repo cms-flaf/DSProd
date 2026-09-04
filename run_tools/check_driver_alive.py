@@ -7,9 +7,9 @@ resubmitted, and nothing downstream is merged. In the Run3_2023BPix production o
 (nothing polled between 09-01 16:20 and 09-03 14:12) was 27 h of the 68.4 h that production took to
 reach 99.4 %, and `data/jobs/` records 14 driver invocations over 7 days.
 
-The liveness signal is the newest `data/*/*/crab_jobs_*.json`: law rewrites that dump on every poll
-iteration, so its mtime is visible from any machine that can read the production area -- including
-the one the driver did *not* die on.
+The liveness signal is the newest `data/*/*/crab_jobs_*.json` that still has work to drive: law
+rewrites that dump on every poll iteration, so its mtime is visible from any machine that can read
+the production area -- including the one the driver did *not* die on.
 
 Nothing here imports law or dsprod, so it runs under a bare python3 from acron. `--help` shows the
 acron line.
@@ -48,7 +48,7 @@ NO_WORK_STATUSES = ("finished",)
 DEFAULT_AREA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 Observation = namedtuple(
-    "Observation", ["area", "projects", "dump", "mtime", "work_left"]
+    "Observation", ["area", "projects", "n_dumps", "dump", "mtime"]
 )
 
 
@@ -59,22 +59,20 @@ def crab_project_dirs(area, glob_fn=glob.glob):
     )
 
 
-def newest_job_dump(area, glob_fn=glob.glob):
-    """The most recently written law job-data dump under *area*, as (path, mtime).
+def job_dumps(area, glob_fn=glob.glob):
+    """Every law job-data dump under *area*, newest first, as (path, mtime).
 
     Globbed rather than named: the file carries the workflow's branch range
-    (`crab_jobs_0To4800.json`) and there is one per store directory, so which file law is currently
-    rewriting is not knowable in advance.
+    (`crab_jobs_0To4800.json`) and there is one per store directory and branch selection, so which
+    file law is currently rewriting is not knowable in advance.
     """
-    newest, newest_mtime = None, None
+    found = []
     for path in glob_fn(os.path.join(area, JOB_DUMP_GLOB)):
         try:
-            mtime = os.path.getmtime(path)
+            found.append((path, os.path.getmtime(path)))
         except OSError:
             continue
-        if newest_mtime is None or mtime > newest_mtime:
-            newest, newest_mtime = path, mtime
-    return newest, newest_mtime
+    return sorted(found, key=lambda pm: pm[1], reverse=True)
 
 
 def work_left(path):
@@ -103,15 +101,33 @@ def work_left(path):
     return False
 
 
+def newest_dump_with_work(dumps):
+    """The newest of *dumps* that still has jobs to drive, as (path, mtime).
+
+    Deliberately not simply the newest dump. A merge run delivers the finished part of a
+    production from a second process while the generation is still going
+    (`docs/operations/long-productions.md`), and the `NanoMergeTask` dump it leaves behind -- every
+    job finished, nothing unsubmitted -- keeps its mtime for good. Keyed on the newest dump alone,
+    that settled file answered for the whole area and the stalled `RunProd` behind it was never
+    reported: exactly the 27 h gap this alarm exists to catch.
+    """
+    for path, mtime in dumps:
+        # None (a dump caught mid-write) counts as work: nothing proves that leg is done
+        if work_left(path) is not False:
+            return path, mtime
+    return None, None
+
+
 def observe(area, glob_fn=glob.glob):
     """Read everything the decision needs from the production area."""
-    dump, mtime = newest_job_dump(area, glob_fn=glob_fn)
+    dumps = job_dumps(area, glob_fn=glob_fn)
+    dump, mtime = newest_dump_with_work(dumps)
     return Observation(
         area=area,
         projects=crab_project_dirs(area, glob_fn=glob_fn),
+        n_dumps=len(dumps),
         dump=dump,
         mtime=mtime,
-        work_left=None if dump is None else work_left(dump),
     )
 
 
@@ -144,12 +160,20 @@ def fmt_age(seconds):
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
 
+def dump_task(area, path):
+    """The task a job dump belongs to: `data/<Task>/<store dir>/crab_jobs_*.json`."""
+    parts = os.path.relpath(path, area).split(os.sep)
+    return parts[1] if len(parts) > 1 else path
+
+
 def stall_message(obs, age, threshold_seconds):
-    """The report for a production that nothing has polled in *age* seconds."""
+    """The report for a workflow that nothing has polled in *age* seconds."""
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(obs.mtime))
     return "\n".join(
         [
-            f"DSProd: no driver has polled for {fmt_age(age)} "
+            # named, because another workflow in the same area may well be polling: only dumps
+            # with work outstanding are considered, and a settled one says nothing about this
+            f"DSProd: no driver has polled {dump_task(obs.area, obs.dump)} for {fmt_age(age)} "
             f"(threshold {fmt_age(threshold_seconds)})",
             f"  area:       {obs.area}",
             f"  last poll:  {stamp}  {os.path.relpath(obs.dump, obs.area)}",
@@ -169,7 +193,7 @@ def decide(obs, now, threshold_seconds, state):
         # an area that never submitted to CRAB (a fresh checkout, a local-only production) has no
         # driver to miss -- alarming there would train the operator to ignore the mail
         return None, {}
-    if obs.dump is None:
+    if not obs.n_dumps:
         # law never removes its job directories (job_file_dir_cleanup: False in config/law.cfg), so
         # an area whose store directories were cleared to restart clean stays in this state for good
         message = (
@@ -177,8 +201,8 @@ def decide(obs, now, threshold_seconds, state):
             f"{JOB_DUMP_GLOB} was ever written -- no driver has recorded a poll."
         )
         new_state = {"dump": "", "mtime": 0}
-    elif obs.work_left is False:
-        # nothing is left for a driver to do, so the last dump only gets older from here
+    elif obs.dump is None:
+        # every workflow in the area is settled, so the last dump only gets older from here
         return None, {}
     elif now - obs.mtime <= threshold_seconds:
         return None, {}
