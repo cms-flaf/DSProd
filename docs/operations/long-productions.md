@@ -240,4 +240,28 @@ production writes `htcondor_jobs_*.json` and has no project directories to key o
     11.35 h) and four serialised retry generations of genuinely long jobs. Keeping the driver alive
     does not shorten those: the parking is what the
     [release timer](../concepts/backends.md#job-waves) addresses, and 169 of 192 merge groups being
-    complete with none merged is a scheduling question in `NanoMergeTask`, not a supervision one.
+    complete with none merged was a scheduling question in `NanoMergeTask`, not a supervision one
+    (see below).
+
+## Merging while the production runs
+
+A merge group requires only [its own seeds](../concepts/tasks.md#nanomergetask), so the finished
+part of a production can be delivered while the rest is still generating. Ask what is ready and run
+the line it prints:
+
+```bash
+run_tools/merge_status.py --setup <setup> --eras Run3_2023BPix
+# ... then, as printed:
+law run NanoMergeTask --setup <setup> --eras 'Run3_2023BPix' --branches 0:78,96:174
+```
+
+The branch numbers are only valid for the selection they were computed for, so pass the same
+`--eras` / `--points` / `--test` to both. `merge_status.py` reads storage only — it is safe to run
+against an area someone else is driving — and its four states, exit codes and cost are described
+with the [task](../concepts/tasks.md#which-groups-can-be-merged).
+
+Merging from a **second** process while a driver is running the same production is the one thing
+to avoid: a narrowed merge run keeps its own `RunProd` job-data file, so any seed it finds missing
+would be submitted a second time under a second set of job ids. Either merge from the same driver
+(`law run NanoMergeTask` instead of `law run RunProd` — it requires the generation stage anyway),
+or merge only groups the report calls `ready`, which by definition need no submission at all.

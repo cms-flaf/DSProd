@@ -958,7 +958,22 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         }
 
     def run(self):
+        # `NanoMergeTask` requires only the seeds of the groups it merges, so a merge job whose
+        # seed is not produced yet would run this 7 h chain inside a 3 h merge slot, on the
+        # merge's single core, and lose it on walltime. Same reasoning as `MakeGridpack`: if the
+        # submitted task cannot be determined, allow it rather than block a legitimate run.
         era, pi, seed = self.branch_data
+        family = self.get_task_family().rsplit(".", 1)[-1]
+        submitted = submitted_task_family()
+        if on_batch_node() and submitted not in (None, family):
+            raise RuntimeError(
+                f"seed {seed} of {self.process.point_name(self.prod_points[pi])} ({era}) is not "
+                f"produced yet, and this job was submitted to run {submitted}, not {family}: a "
+                f"{submitted} job must not generate a sample on its own slot. Submit {family} "
+                "for that seed first -- run_tools/merge_status.py says which merge groups are "
+                "ready -- or check that fs_default is readable from the worker, which is the "
+                "other way its record can look missing."
+            )
         point = self.prod_points[pi]
         fragment = self.process.gen_fragment(point, era)
         n_evt = point.events_per_job
@@ -1032,8 +1047,34 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
             for i, bd in enumerate(runprod_branches(self.prod_eras, self.prod_points))
         }
 
+    def required_runprod_branches(self):
+        """`RunProd` branch ids of every seed in this merge workflow's *effective* branch map.
+
+        Built from `get_branch_map()`, which law has already reduced to a `--branches` selection,
+        so narrowing the merge narrows what has to be generated for it.
+        """
+        index = self._runprod_index()
+        return sorted(
+            {
+                index[(era, pi, seed)]
+                for era, pi, _, _, seeds in self.get_branch_map().values()
+                for seed in seeds
+            }
+        )
+
     def workflow_requires(self):
-        return {"runprod": RunProd.req(self)}
+        # Only the seeds these groups merge, never the whole generation stage: with
+        # `RunProd.req(self)` no group could run until the last branch of the production had, and
+        # 169 of the 192 groups of Run3_2023BPix were complete with none merged. law copies
+        # `branches` through `req()`, so leaving it implicit was wrong in the other direction as
+        # well -- `--branches 5` on the merge asked for *RunProd* branch 5, not for the 50 seeds
+        # of merge group 5.
+        return {
+            "runprod": RunProd.req(
+                self,
+                branches=tuple(law.util.range_join(self.required_runprod_branches())),
+            )
+        }
 
     def requires(self):
         era, pi, _, _, seeds = self.branch_data

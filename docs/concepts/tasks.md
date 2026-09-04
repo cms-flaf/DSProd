@@ -116,6 +116,15 @@ per step. The proxy requirement is satisfied by the batch-delegated proxy
 inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). The number of seeds per point and era follows from
 `events_total[era] / events_per_job` — `events_total` is per era, so one setup covers all of them.
 
+!!! warning "Never generated *inside* a merge job"
+    `NanoMergeTask` requires single `RunProd` branches, so a merge branch whose seed has no
+    record would make luigi run this 7 h chain inside the merge job — a 3 h slot with one core,
+    which it loses on walltime. `RunProd` therefore makes the same check `MakeGridpack` does: on
+    a batch node, a job launched for anything other than `RunProd` refuses to generate and names
+    the seed it was asked for. Either that seed really is missing — submit `RunProd` for it, or
+    merge only the groups [`merge_status.py`](#which-groups-can-be-merged) calls ready — or
+    `fs_default` is unreachable from the worker, which is the other way a record looks missing.
+
 ### `NanoMergeTask`
 
 Merges a group of per-seed nanos (`files_per_merge` per group) into one output with `haddnano`,
@@ -127,6 +136,57 @@ its seed is recorded as produced. Output is the final, FLAF-facing file:
 ```
 <output>/nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root
 ```
+
+A group waits for **its own seeds only**, not for the generation stage as a whole: the workflow
+requires exactly the `RunProd` branches of the groups it is running, taken from its branch map
+*after* `--branches` has been applied. A group whose 50 seeds are on storage can therefore be
+merged while the other 4750 of the era are still being produced. The requirement used to be the
+entire `RunProd` workflow, and that is how the Run3_2023BPix production reached 169 of its 192
+groups complete with not one merged.
+
+Two consequences to know about:
+
+- Asking for the whole merge (no `--branches`) requires every `RunProd` branch, which law
+  collapses back to "all branches" — so a production driven through `NanoMergeTask` polls the
+  same job data as `law run RunProd` itself, `data/RunProd/<store>/<backend>_jobs_0To<n>.json`. A
+  **narrowed** merge run instead gets its own job-data file in that same directory, named after
+  the branch ranges it requires (`crab_jobs_0To51_100To251.json`). Two drivers in one area would
+  then submit the same seeds twice under two sets of job ids, which is what `drive.sh`'s
+  [lock](../operations/long-productions.md#the-lock) is for. Neither the store directory nor any
+  product path depends on the selection.
+- `--branches` on the merge selects **merge groups** and asks for the seeds behind them. It used
+  to hand the merge's own branch numbers to `RunProd` as if they were seeds, so `--branches 5`
+  waited on `RunProd` branch 5 rather than on the 50 seeds of group 5.
+
+#### Which groups can be merged
+
+```sh
+run_tools/merge_status.py --setup <setup> --eras Run3_2023BPix
+```
+
+Reports every merge group of the selection as one of
+
+| state | meaning |
+|---|---|
+| `merged` | the merged file is on storage; nothing left to do |
+| `ready` | every seed has a `produced/` record **and** its staged nano file |
+| `blocked` | at least one seed has no record yet — `RunProd` still owes it |
+| `broken` | every seed is recorded but a staged file is gone and the group is not merged |
+
+and prints the `law run NanoMergeTask … --branches <ranges>` line that merges exactly the ready
+ones, which is what makes merging part of a production a supported procedure rather than folklore.
+It exits 0 normally and 1 when a group is `broken` — the state `NanoMergeTask` refuses to run on
+(its merged file was removed after the fact); delete the affected seeds' `produced/` records so
+they are produced again. `--all` lists every unmergeable group instead of the first 20, and the
+same `--eras` / `--points` / `--test` selectors as the tasks take apply, since the branch numbers
+it prints are only valid for the same selection.
+
+It reads storage with three directory listings per (era, point, nano version) — the merged files,
+the records, the staged nanos — `--threads` of them at a time (16 by default), never a stat per
+seed: a full era is thousands of seeds per version, and at one remote round trip each the stats
+alone run for hours. Because a failed listing and a missing directory are indistinguishable at
+that layer, a report that finds *nothing at all* says so and points at the endpoint and the proxy
+rather than claiming the production is unproduced.
 
 ### `BackfillProducedRecords`
 
