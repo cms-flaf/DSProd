@@ -119,7 +119,7 @@ filtered events would legitimately return fewer, and no DSProd process does that
 
 Those 40 files were a **generator** defect rather than a framework one, which is also what the
 assertion is for: a fragment that lets Pythia sample an off-shell W/Z below the mass at which it
-can be decayed loses the events it cannot decay — about one in 10^5, so one job in a hundred — and
+can be decayed loses the events it cannot decay — about 5 in 10^6, so one job in two hundred — and
 an LHE record, readable only once, cannot be replaced, so the job ends one event short. The X_HH
 fragments keep `mMin` above that floor, so the count a job is asked for is one it can deliver.
 
