@@ -27,8 +27,11 @@ if dsprod_repo not in sys.path:
 # `Task.to_abs` resolves the setup path against $ANALYSIS_PATH, and the checkout is the area
 os.environ["ANALYSIS_PATH"] = dsprod_repo
 
+import law  # noqa: E402
 import luigi  # noqa: E402
 from law.job.dashboard import NoJobDashboard  # noqa: E402
+
+law.contrib.load("cms")
 
 from dsprod.crab import (  # noqa: E402
     CrabWorkflow,
@@ -46,17 +49,29 @@ PARALLEL_JOBS = 5000
 MIN_WAVE = 1000
 
 _data_dir = None
+_sandbox_patcher = None
 
 
 def setUpModule():
     # nothing here writes job data (`dump_job_data` is replaced below), but a stray write must
     # never land in the production area a checkout may be driving
-    global _data_dir
+    global _data_dir, _sandbox_patcher
     _data_dir = tempfile.mkdtemp(prefix="dsprod_test_")
     os.environ["ANALYSIS_DATA_PATH"] = _data_dir
+    # Building the proxy runs the sandbox pre-flight in `crab_create_job_manager`, which needs
+    # cvmfs. The gate under test never touches CMSSW, and a runner has no cvmfs, so hand the
+    # manager a ready environment instead of letting it build one.
+    _sandbox_patcher = mock.patch.object(
+        law.cms.CrabJobManager,
+        "cmssw_env",
+        new_callable=mock.PropertyMock,
+        return_value={"PATH": os.environ.get("PATH", "")},
+    )
+    _sandbox_patcher.start()
 
 
 def tearDownModule():
+    _sandbox_patcher.stop()
     shutil.rmtree(_data_dir, ignore_errors=True)
 
 
