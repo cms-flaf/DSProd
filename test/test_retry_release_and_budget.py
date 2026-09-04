@@ -9,6 +9,8 @@ branch to burn its attempts raises `tolerance exceeded` and takes the run down w
 jobs, which a release window makes easy to reach: 56 % of failures arrive in under 6 min.
 """
 
+import contextlib
+import json
 import os
 import shutil
 import sys
@@ -26,8 +28,13 @@ if dsprod_repo not in sys.path:
 os.environ["ANALYSIS_PATH"] = dsprod_repo
 
 import luigi  # noqa: E402
+from law.job.dashboard import NoJobDashboard  # noqa: E402
 
-from dsprod.crab import DSProdCrabWorkflowProxy, _CrabProxyBase  # noqa: E402
+from dsprod.crab import (  # noqa: E402
+    CrabWorkflow,
+    DSProdCrabWorkflowProxy,
+    _CrabProxyBase,
+)
 from dsprod.tasks import NanoMergeTask, RunProd  # noqa: E402
 
 SETUP = "models/X_HH/setups/Run3_XHHbbWW.yaml"
@@ -70,16 +77,55 @@ def jobs(*job_nums):
     return OrderedDict((job_num, [job_num]) for job_num in job_nums)
 
 
+def default_crab_cfg(case):
+    """Ignore the checkout's `crab:` settings, so a local one cannot move the wave size."""
+    patcher = mock.patch.object(CrabWorkflow, "_crab_cfg", return_value={})
+    patcher.start()
+    case.addCleanup(patcher.stop)
+
+
+@contextlib.contextmanager
+def law_submission(p):
+    """Run law's own `submit()` underneath the proxy, with only the CRAB calls replaced.
+
+    What the release depends on is law's slot arithmetic -- it fills `unsubmitted_jobs` in dict
+    order and stops at `n_parallel`, so a release can be truncated -- and that is exercised here
+    rather than described by a double. Yields the list of job numbers actually submitted.
+    """
+    submitted = []
+
+    def submit_group(submit_jobs, **kwargs):
+        submitted.extend(submit_jobs)
+        return (
+            [f"crab_{job_num}" for job_num in submit_jobs],
+            OrderedDict(
+                (job_num, {"job": "job.jdl", "config": {}, "log": None})
+                for job_num in submit_jobs
+            ),
+        )
+
+    p.dashboard = NoJobDashboard()
+    with mock.patch.object(
+        type(p), "_submit_group", side_effect=submit_group
+    ), mock.patch.object(
+        type(p), "get_extra_submission_data", return_value={}
+    ), mock.patch.object(
+        type(p.task), "publish_message"
+    ):
+        yield submitted
+
+
 class TestWaveGate(unittest.TestCase):
     """The decision table of `_should_submit_crab_group`, at a 1000-job wave in 5000 slots."""
 
     def setUp(self):
+        default_crab_cfg(self)
         self.proxy = proxy()
 
     def decide(self, n_backlog, n_retry, n_active, parked_min_ago=None):
         self.proxy.poll_data.n_active = n_active
         self.proxy._retry_parked_since = (
-            None if parked_min_ago is None else time.time() - parked_min_ago * 60
+            None if parked_min_ago is None else time.monotonic() - parked_min_ago * 60
         )
         return self.proxy._should_submit_crab_group(n_backlog, n_retry)
 
@@ -134,7 +180,7 @@ class TestWaveGate(unittest.TestCase):
 
     def test_the_release_window_is_configurable(self):
         with mock.patch.object(
-            self.proxy.task, "_crab_cfg", return_value={"retry_release_minutes": 5}
+            CrabWorkflow, "_crab_cfg", return_value={"retry_release_minutes": 5}
         ):
             self.assertTrue(
                 self.decide(n_backlog=5, n_retry=0, n_active=4795, parked_min_ago=6)
@@ -144,10 +190,13 @@ class TestWaveGate(unittest.TestCase):
             )
 
     def test_an_unreadable_release_window_falls_back_to_the_default(self):
-        with mock.patch.object(
-            self.proxy.task, "_crab_cfg", return_value={"retry_release_minutes": "soon"}
-        ):
-            self.assertEqual(self.proxy._crab_retry_release_minutes(), 45.0)
+        for value in ("soon", float("nan")):
+            # a nan would pass `float()` and then disable the release for ever, since
+            # `waited >= nan` is never true
+            with mock.patch.object(
+                CrabWorkflow, "_crab_cfg", return_value={"retry_release_minutes": value}
+            ):
+                self.assertEqual(self.proxy._crab_retry_release_minutes(), 45.0)
 
     def test_the_size_bar_ignores_the_retries_offered_this_poll(self):
         # a whole generation of retries is parked first and goes out on the next poll as backlog,
@@ -157,9 +206,10 @@ class TestWaveGate(unittest.TestCase):
 
 
 class TestRetryParking(unittest.TestCase):
-    """Where a parked retry lives, in what order, and what a killed driver finds."""
+    """Where a parked retry lives, in what order, and what frees it again."""
 
     def setUp(self):
+        default_crab_cfg(self)
         self.proxy = proxy()
         # nothing has been produced yet, so no job is skippable and no storage is consulted
         self.proxy._existing_branches = set()
@@ -173,10 +223,28 @@ class TestRetryParking(unittest.TestCase):
             self.proxy.job_data.jobs[job_num] = self.proxy.job_data_cls.job_data(
                 branches=[job_num]
             )
+            # law counts the attempt before it offers the job to submit()
+            # (`law/workflow/remote.py`), which is what marks it a retry from here on
+            self.proxy.job_data.attempts[job_num] = (
+                self.proxy.job_data.attempts.get(job_num, 0) + 1
+            )
         self.proxy.poll_data.n_active = (
             N_BRANCHES - len(job_nums) if n_active is None else n_active
         )
         return self.proxy.submit(jobs(*job_nums))
+
+    def restart(self):
+        """A second driver reading the submission file the first one wrote.
+
+        law loads it with `JobData.update` and resubmits nothing itself, so this is the whole of
+        what a resumed leg knows about the parked retries.
+        """
+        resumed = proxy()
+        resumed.job_data.update(json.loads(json.dumps(dict(self.proxy.job_data))))
+        resumed._submitted = True
+        resumed._existing_branches = set()
+        resumed.dump_job_data = lambda: None
+        return resumed
 
     def test_parked_retries_stay_in_the_job_data(self):
         # a proxy-side dict would orphan them on a driver kill and, since law snapshots
@@ -206,30 +274,76 @@ class TestRetryParking(unittest.TestCase):
         self.park(3)
         self.assertEqual(self.proxy._retry_parked_since, first)
 
-    def test_a_release_delegates_to_law_and_clears_the_clock(self):
-        self.proxy.poll_data.n_active = N_BRANCHES - 1
-        self.proxy._retry_parked_since = time.time() - 46 * 60
+    def test_a_release_delegates_the_retry_generation_to_law(self):
+        # the retries offered by this poll are handed to law as retries, so a release triggered by
+        # an older parked one takes them along instead of parking them for a window of their own
+        self.park(1, n_active=N_BRANCHES - 1)
+        self.proxy._retry_parked_since -= 46 * 60
         with mock.patch.object(
             _CrabProxyBase, "submit", autospec=True, return_value=OrderedDict()
         ) as submit:
             self.proxy.submit(jobs(4))
         self.assertEqual(submit.call_count, 1)
         self.assertEqual(list(submit.call_args[0][1]), [4])
-        self.assertIsNone(self.proxy._retry_parked_since)
 
-    def test_a_backlog_wave_clears_the_clock_too(self):
-        # law's submit() drains `unsubmitted_jobs` up to n_parallel whatever opened the gate, so
-        # the parked retries left with this wave -- and whatever did not has no free slot anyway.
-        # A clock left running here would open the gate on every poll for the rest of the run.
+    def test_a_wave_that_takes_every_parked_retry_stops_the_clock(self):
+        # 5000 free slots take the 2 parked retries and the backlog behind them, so nothing is
+        # parked afterwards. A clock left running with nothing on it would open the gate on every
+        # poll for the rest of the run, i.e. one CRAB task per polling interval.
         self.park(1, 2)
         self.proxy.job_data.unsubmitted_jobs.update({n: [n] for n in range(100, 1100)})
         self.proxy.poll_data.n_active = 0
-        with mock.patch.object(
-            _CrabProxyBase, "submit", autospec=True, return_value=OrderedDict()
-        ) as submit:
+        with law_submission(self.proxy) as submitted:
             self.proxy.submit()
-        self.assertEqual(submit.call_count, 1)
+        self.assertEqual(len(submitted), 1002)
+        self.assertEqual(dict(self.proxy.job_data.unsubmitted_jobs), {})
         self.assertIsNone(self.proxy._retry_parked_since)
+
+    def test_a_release_with_fewer_slots_than_retries_keeps_the_rest_on_a_clock(self):
+        # law fills only up to `n_parallel`, so one free slot releases one of the 400 parked
+        # retries. Clearing the clock here would leave the other 399 with no clock at all: free
+        # slots opening up later could not release them, only the size gate or the tail term.
+        self.park(*range(1, 401), n_active=PARALLEL_JOBS - 1)
+        self.proxy._retry_parked_since -= 46 * 60
+        with law_submission(self.proxy) as submitted:
+            self.proxy.submit()
+        self.assertEqual(len(submitted), 1)
+        self.assertEqual(len(self.proxy.job_data.unsubmitted_jobs), 399)
+        self.assertIsNotNone(self.proxy._retry_parked_since)
+        # a fresh window, not the expired one, so the next poll does not open the gate again
+        self.proxy.poll_data.n_active = 3000
+        self.assertFalse(self.proxy._should_submit_crab_group(399, 0))
+        self.proxy._retry_parked_since -= 46 * 60
+        self.assertTrue(self.proxy._should_submit_crab_group(399, 0))
+
+    def test_a_restarted_driver_releases_the_retries_it_finds_parked(self):
+        # the case that costs the most: the driver dies about daily, and a resumed leg parks
+        # nothing itself -- law calls submit() with an empty retry generation on every poll -- so
+        # a clock that only parking can start never runs, leaving the retries to the size gate
+        self.park(1, 2, 3, n_active=3270)
+        resumed = self.restart()
+        self.assertEqual(list(resumed.job_data.unsubmitted_jobs), [1, 2, 3])
+        self.assertIsNone(resumed._retry_parked_since)
+
+        resumed.poll_data.n_active = 3270
+        self.assertEqual(dict(resumed.submit()), {})
+        self.assertIsNotNone(resumed._retry_parked_since)
+
+        resumed._retry_parked_since -= 46 * 60
+        with law_submission(resumed) as submitted:
+            resumed.submit()
+        self.assertEqual(submitted, [1, 2, 3])
+        self.assertEqual(dict(resumed.job_data.unsubmitted_jobs), {})
+
+    def test_the_backlog_alone_never_starts_a_clock(self):
+        # a never-submitted branch has no `attempts` entry, and must not get a clock: the timer
+        # would then break a large production into a CRAB task per release window, which is the
+        # tiny-task problem the wave size exists to solve
+        self.proxy.job_data.unsubmitted_jobs.update({n: [n] for n in range(1, 500)})
+        self.proxy.poll_data.n_active = 4700
+        self.assertEqual(dict(self.proxy.submit()), {})
+        self.assertIsNone(self.proxy._retry_parked_since)
+        self.assertEqual(len(self.proxy.job_data.unsubmitted_jobs), 499)
 
 
 class TestFailureBudget(unittest.TestCase):

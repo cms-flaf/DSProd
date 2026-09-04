@@ -144,7 +144,15 @@ sets its own budget:
 Four attempts is enough to walk away from a black-hole site — its
 [quarantine](../concepts/backends.md#failing-sites) needs 5 failures at that site to fire — while a
 branch that keeps dying is called failed in roughly a day rather than occupying the two that six
-generations of a 7 h job would take.
+generations of a 7 h job would take. (law offers a branch that has just spent its last attempt to
+the submission step once more and then ignores whatever that job reports, so the number of CRAB
+jobs a hopeless branch produces is one higher than its budget. Only the budgeted attempts decide
+when it counts as failed.)
+
+`tolerance` is a **fraction** of the branches, as law reads any value at or below 1, so a
+production of fewer than 20 branches — a single point, or a `--test` run — has a budget below one
+job and still ends on its first dead branch. law reads a value above 1 as an absolute number of
+jobs instead, so `--RunProd-tolerance 2` is how a small production gets the same slack.
 
 It is `acceptance`, not `tolerance`, that forbids a silently short sample: the run carries on past
 a failed branch, but once nothing is left to finish, law reports
@@ -157,6 +165,13 @@ and the workflow fails with [code 40](#what-laws-exit-code-means), which `drive.
 keeps its retry counts in memory only, so the resumed leg hands each failed branch a fresh budget
 and resubmits it after one polling iteration. In other words: `tolerance` decides how much of a
 production may fail *before the driver gives up on the rest*, and a rerun is what finishes it.
+
+That last point cuts both ways: a branch that is broken for good — a bad gridpack, a seed that
+crashes the generator — makes every leg end in code 40, and since a leg long enough to reach that
+point also resets the restart budget, `drive.sh` keeps handing it a fresh budget until
+`--max-restarts` is reached from a genuine crash loop or an operator stops it. `data/logs` shows
+it as legs of the same length failing on the same branch numbers; the fix is to fix or drop the
+branch, not to raise the budget.
 
 Both are ordinary law parameters, so a run can override them — `--RunProd-retries 8`,
 `--RunProd-tolerance 0.1`. Address `RunProd` by name: like `--max-runtime` and `--n-cpus`, neither

@@ -888,13 +888,18 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 2)
 
     # 4 attempts per job: law submits a job once and then resubmits it `retries` times, so the
-    # budget a branch really burns is `retries + 1`. Every attempt after the first costs a
-    # generation of wall clock -- a job of this chain runs 7.1 h at the median -- so law's default
-    # of 5 buys a broken branch six generations, ~2 days, before it is finally called failed. Four
-    # is enough to walk away from a black-hole site (whose own quarantine needs 5 failures at that
-    # site to fire) while a branch that keeps dying is called failed in roughly a day.
+    # budget a branch really burns is `retries + 1`. (It then offers the exhausted job to the
+    # submission step one last time and ignores whatever that job reports, so the number of CRAB
+    # jobs is one higher again; only the budgeted attempts decide when a branch counts as failed.)
+    # Every attempt after the first costs a generation of wall clock -- a job of this chain runs
+    # 7.1 h at the median -- so law's default of 5 buys a broken branch six generations, ~2 days,
+    # before it is finally called failed. Four is enough to walk away from a black-hole site
+    # (whose own quarantine needs 5 failures at that site to fire) while a branch that keeps dying
+    # is called failed in roughly a day.
     retries = copy_param(HTCondorWorkflow.retries, 3)
-    # ... and 5 % of the branches may end up out of attempts without stopping the run. law's
+    # ... and 5 % of the branches may end up out of attempts without stopping the run (law reads
+    # a tolerance at or below 1 as a fraction, so a production of fewer than 20 branches is still
+    # ended by its first dead branch and needs an absolute `--RunProd-tolerance 2`). law's
     # default of 0.0 means the FIRST branch to burn its budget raises `tolerance exceeded` and
     # takes a multi-day production with it, 4799 finished jobs and all -- and with a 45-minute
     # retry release window and 56 % of failures arriving in under 6 min, one bad site can spend a
