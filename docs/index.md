@@ -56,4 +56,6 @@ extra bookkeeping step.
   end to end.
 - **[Architecture](concepts/architecture.md)** — the production chain and how the pieces fit.
 - **[Production setups](configuration/prod-setups.md)** — the YAML that describes a production.
+- **[Driving a long production](operations/long-productions.md)** — the log, the lock, the
+  credential clocks and the staleness alarm for a multi-day run.
 - **[Contributing](contributing.md)** — code style and the formatting check.

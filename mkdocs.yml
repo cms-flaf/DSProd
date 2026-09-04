@@ -69,4 +69,6 @@ nav:
       - Production setups: configuration/prod-setups.md
       - Processes: configuration/processes.md
       - Era conditions: configuration/conditions.md
+  - Operations:
+      - Driving a long production: operations/long-productions.md
   - Contributing: contributing.md
