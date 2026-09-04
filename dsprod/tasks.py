@@ -233,9 +233,28 @@ class Task(law.Task):
         need" no longer has a whole-number answer. Checked on the setup itself, so any task refuses
         it, not only the merge. `--test` is exempt: it deliberately produces a single short job.
         """
-        per_file = int(self.prod_setup["events_per_job"]) * int(
-            self.prod_setup.get("files_per_merge", 20)
+        wanted = int(self.prod_setup["events_per_job"])
+        per_file = wanted * int(self.prod_setup.get("files_per_merge", 20))
+        # The validation below divides by the setup's job size, while `RunProd` produces
+        # `point.events_per_job` events and `n_jobs()` counts seeds with it. A point carrying its
+        # own size would therefore be validated against a number it does not use, and deliver
+        # merged files of a size nobody asked for.
+        resized = sorted(
+            {
+                (point.name, int(point.events_per_job or 0))
+                for point in Task.all_points
+                if int(point.events_per_job or 0) != wanted
+            }
         )
+        if resized:
+            shown = ", ".join(f"{name} ({size})" for name, size in resized[:6])
+            more = f" ... and {len(resized) - 6} more" if len(resized) > 6 else ""
+            raise RuntimeError(
+                f"{self.setup}: events_per_job is a property of the setup ({wanted}), but "
+                f"{len(resized)} point(s) carry a different one: {shown}{more}. The merge "
+                "contract is one file per events_per_job x files_per_merge events, so a "
+                "per-point size silently changes the size of the delivered files."
+            )
         bad = [
             f"{point.name} / {era}: {n} events"
             for point in Task.all_points
@@ -882,10 +901,13 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 24.0)
-    # 2 cores, i.e. 5000 MB on CRAB (2500 per core, which is also its cap for two cores). A
-    # single-threaded job of this chain peaked at 3042 MB across a 3270-job production -- above
-    # what a one-core slot offers -- while four cores would force a 10 GB request for no need.
-    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 2)
+    # 4 cores, i.e. 10 GB on CRAB (2500 MB per core, which is also its cap for four). Measured
+    # over a finished 4800-job era: the median job runs 7.07 h on two cores and 4.38 h on four,
+    # for 34 % more core-hours. It buys throughput, not a shorter tail -- the slowest 1 % of jobs
+    # run at cpu/wall 0.28 and barely move (p99 1.07x) -- so drop this line if the core-hours are
+    # worth more than the wall-clock. A single-threaded job of this chain peaked at 3042 MB, above
+    # what a one-core slot offers, so one core is not an option.
+    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
 
     # 4 attempts per job: law submits a job once and then resubmits it `retries` times, so the
     # budget a branch really burns is `retries + 1`. (It then offers the exhausted job to the
@@ -1101,6 +1123,50 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         era, pi, version, group, _ = self.branch_data
         return self.merged_nano_target(era, self.prod_points[pi], version, group)
 
+    def _check_contracted_inputs(self, version, seeds):
+        """Refuse a group whose seeds were not all produced at the same job size.
+
+        `events_per_job * files_per_merge` is a contract -- one merged file per 50 000 events, to
+        match the HLepRare skims -- and the only check the merge otherwise makes is
+        `n_out == sum(n_in)`, which a group of mixed sizes satisfies because it is self-consistent.
+        A sample re-produced at a different `events_per_job` would therefore merge quietly into
+        files of the wrong size. The `produced/` records carry the size each seed was asked for,
+        so compare those. Deliberately the *requested* size and not the delivered count: a job
+        does not always return every event it was asked for -- one Run3_2023 job returned 999 of
+        its 1000, leaving that merged file at 49 999 -- and refusing a group over one event would
+        strand it, since re-running the seed yields the same number again. `n_out == sum(n_in)`
+        below is what guards the merge itself. `--test` produces a single short job on purpose and
+        is exempt.
+        """
+        if self.test > 0:
+            return
+        wanted = int(self.prod_setup["events_per_job"])
+        # the records `RunProd` declares for these seeds, not a second path built by hand
+        records = self.input()
+        sizes = {}
+        for seed in seeds:
+            target = records[seed][version]
+            try:
+                requested = int(target.load(formatter="json")["events_requested"])
+            except Exception as exc:
+                raise RuntimeError(
+                    f"cannot read the produced record of seed {seed} at {target.path}, so the "
+                    f"job size of this merge group cannot be checked: {exc}"
+                )
+            sizes.setdefault(requested, []).append(seed)
+        odd = {size: s for size, s in sizes.items() if size != wanted}
+        if odd:
+            shown = "; ".join(
+                f"seed {', '.join(map(str, s[:4]))}{' ...' if len(s) > 4 else ''}: {size}"
+                for size, s in sorted(odd.items())
+            )
+            raise RuntimeError(
+                f"this merge group mixes job sizes: the setup asks for {wanted} events per job, "
+                f"but {shown} events. Merging it would produce a file that is not "
+                f"{wanted * int(self.prod_setup.get('files_per_merge', 20))} events. Re-produce "
+                "the odd seeds at the setup's size, or delete their `produced/` records."
+            )
+
     def run(self):
         era, pi, version, _, seeds = self.branch_data
         vparams = run_step.resolve_step_params(
@@ -1118,6 +1184,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                 "removed -- delete the seeds' `produced/` records to regenerate them -- or "
                 "the storage lost them."
             )
+        self._check_contracted_inputs(version, seeds)
         work_dir, is_tmp = self.law_job_home()
         try:
             with contextlib.ExitStack() as stack:
