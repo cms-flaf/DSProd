@@ -75,7 +75,7 @@ crab:
 !!! warning "`max_cores` caps every task's `n_cpus`"
     A CRAB job gets `min(max_cores, <task>.n_cpus)` cores — so a `max_cores` below a task's own
     `n_cpus` silently makes it single-threaded on CRAB while HTCondor still gives it `n_cpus`
-    (`RunProd` asks for 2). Memory follows the cores: the request is raised to
+    (`RunProd` asks for 4). Memory follows the cores: the request is raised to
     `max_memory_mb_per_core` (2500 by default) per core, within CRAB's own limit of
     `max(5000, 2500 * numCores)` MB.
 
