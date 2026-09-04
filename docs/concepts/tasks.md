@@ -118,12 +118,16 @@ entering the release to count costs seconds against a step measured in hours. A 
 filtered events would legitimately return fewer, and no DSProd process does that today.
 
 Those 40 files were a **generator** defect rather than a framework one, which is also what the
-assertion is for: a fragment that lets Pythia sample an off-shell W/Z below its undecayable floor
-of 0.1 GeV loses the events it cannot decay — about one in 10^5, so one job in a hundred — and the
-LHE file then runs dry one event early. The X_HH fragments keep `mMin` above that floor, so the
-count a job is asked for is one it can deliver. If the assertion does fire, expect a cause of that
-kind and not a transient one: the seed replays the same events, so re-running the branch reproduces
-the shortfall exactly.
+assertion is for: a fragment that lets Pythia sample an off-shell W/Z below the mass at which it
+can be decayed loses the events it cannot decay — about one in 10^5, so one job in a hundred — and
+an LHE record, readable only once, cannot be replaced, so the job ends one event short. The X_HH
+fragments keep `mMin` above that floor, so the count a job is asked for is one it can deliver.
+
+A shortfall like that is **not** reproducible per seed, which is why a failing branch is worth
+retrying: the seed fixes the LHE file, but the resonance masses are drawn by Pythia, and with
+concurrent hadronizer streams the draw a given record sees depends on which stream took it and
+what that stream did before. So one attempt in a hundred failing is bad luck and the retry
+succeeds; a branch that comes up short on every attempt is a generator setting to fix.
 
 `RunProd` requires the VOMS proxy, `InstallCMSSW` (for its era), and `MakeGridpack` (for its
 point). Its steps run `cmsDriver` with `--nThreads <n_cpus>` (4 by default), so
