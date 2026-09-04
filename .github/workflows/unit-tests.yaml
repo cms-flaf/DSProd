@@ -11,6 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the models submodule
+        # The process plugins and the production setups live in DSProdModels, so a test that
+        # instantiates a real task needs it. Only that one: `gridpacks` is a ~610 MB Git-LFS store
+        # and both it and `genproductions_scripts` sit behind CERN GitLab SSH URLs, which a runner
+        # cannot reach. DSProdModels is public, so rewriting its SSH URL to HTTPS needs no secret.
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 models
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
