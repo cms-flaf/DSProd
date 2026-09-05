@@ -84,6 +84,18 @@ It reads each era's recipe from [McM]'s public REST API (no certificate needed) 
 The GlobalTag, event content and data tier are reported as notes: central requests within one
 campaign legitimately differ there.
 
+One setting is checked against DSProd's **own** contract instead, and it fails rather than notes:
+the `NANO` step must write **flat** NanoAOD. `cmsDriver` chooses the output module from the
+`eventcontent` string — `if "NANOAOD" in streamType: CppType='NanoAODOutputModule'` — and
+`"NANOAOD"` is not a substring of `"NANOEDMAODSIM"`, so that value leaves a `PoolOutputModule` and
+writes the nano content as EDM `nanoaod::FlatTable` products: no flat `Muon_pt`-style branch, and
+nothing FLAF or HLepRare can read. Central campaigns *do* use `NANOEDMAODSIM`, because their merge
+job rewrites the EDM nano through a `NanoAODOutputModule`; DSProd merges with `haddnano.py`, which
+is a flat-nano hadd and converts nothing, so the flat file has to come from the `NANO` step itself.
+`eventcontent: NANOAODSIM` is therefore a deliberate deviation, and the check is what keeps someone
+from "correcting" it back to the central value. It runs even when McM is unreachable, since an
+unreachable McM must not make the deliverable format pass silently.
+
 Anything DSProd runs that has **no** central counterpart is listed under *not checked* rather than
 passed over — today that is the NanoAOD v15 fan-out for 2022–2023BPix, which has no central v15
 campaign. Silence about the unverified is what let the 2023 eras keep the Run3Summer22 recipe.
