@@ -117,6 +117,20 @@ def norm(value):
     return "" if value is None else str(value)
 
 
+def writes_flat_nano(eventcontent):
+    """Does cmsDriver write **flat** NanoAOD for this `eventcontent`?
+
+    cmsDriver picks the output module by substring -- `if "NANOAOD" in streamType:
+    CppType='NanoAODOutputModule'` in `Configuration/Applications/python/ConfigBuilder.py`, where
+    `streamType` is the eventcontent string itself. "NANOAOD" is **not** a substring of
+    "NANOEDMAODSIM", so that value leaves a `PoolOutputModule` and writes the nano content as EDM
+    `nanoaodFlatTable` products: no flat `Muon_pt`-style branch, and nothing FLAF or HLepRare can
+    read. This is checked here rather than against McM because it is DSProd's own deliverable
+    contract, and because it must still be checked when McM is unreachable.
+    """
+    return any("NANOAOD" in part for part in norm(eventcontent).split(","))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--era", action="append", help="check only this era (repeatable)")
@@ -129,6 +143,27 @@ def main():
     conditions = yaml.safe_load(CONDITIONS.read_text())
     eras = args.era or list(CAMPAIGNS)
     cache, problems, unchecked = {}, [], []
+
+    # the deliverable must be flat NanoAOD; checked before anything that needs McM, so an
+    # unreachable McM cannot make this pass silently
+    for era in eras:
+        if era not in conditions or "NANO" not in (
+            conditions[era].get("prod_steps") or []
+        ):
+            continue
+        for version in list(
+            (conditions[era].get("NANO") or {}).get("versions") or [None]
+        ):
+            params = resolve_step_params(
+                conditions, era, "NANO", version=version or None
+            )
+            content = params.get("eventcontent")
+            if not writes_flat_nano(content):
+                problems.append(
+                    f"{era}/NANO eventcontent={norm(content)!r} writes EDM, not flat NanoAOD: "
+                    "the delivered sample would carry nanoaodFlatTable products instead of flat "
+                    "branches, and FLAF could not read it"
+                )
 
     for era in eras:
         if era not in CAMPAIGNS:
@@ -151,8 +186,11 @@ def main():
             try:
                 request = resolve(campaign, cache)
             except ConnectionError as exc:
-                print(f"McM unreachable ({exc}); nothing was checked", file=sys.stderr)
-                return 0
+                print(
+                    f"McM unreachable ({exc}); only the output-format check ran",
+                    file=sys.stderr,
+                )
+                break
             if request is None:
                 unchecked.append(
                     f"{era}/{step_key}: no McM request found for {campaign}"
