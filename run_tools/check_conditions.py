@@ -147,10 +147,16 @@ def main():
     # the deliverable must be flat NanoAOD; checked before anything that needs McM, so an
     # unreachable McM cannot make this pass silently
     for era in eras:
-        if era not in conditions or "NANO" not in (conditions[era].get("prod_steps") or []):
+        if era not in conditions or "NANO" not in (
+            conditions[era].get("prod_steps") or []
+        ):
             continue
-        for version in list((conditions[era].get("NANO") or {}).get("versions") or [None]):
-            params = resolve_step_params(conditions, era, "NANO", version=version or None)
+        for version in list(
+            (conditions[era].get("NANO") or {}).get("versions") or [None]
+        ):
+            params = resolve_step_params(
+                conditions, era, "NANO", version=version or None
+            )
             content = params.get("eventcontent")
             if not writes_flat_nano(content):
                 problems.append(
