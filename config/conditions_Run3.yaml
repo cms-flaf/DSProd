@@ -40,11 +40,15 @@ default_step:
     datatier: MINIAODSIM
   NANO:
     step: NANO
-    # NANOAODSIM, not NANOEDMAODSIM: cmsDriver picks the output module from this string --
-    # `if "NANOAOD" in streamType: CppType='NanoAODOutputModule'` (ConfigBuilder.py:722), and
-    # "NANOAOD" is not a substring of "NANOEDMAODSIM". That value therefore leaves a
-    # PoolOutputModule and writes the nano content as EDM `nanoaodFlatTable` products, which
-    # has no flat `Muon_pt`-style branch for FLAF or HLepRare to read.
+    # NANOAODSIM, and this is a DELIBERATE deviation from the central recipe -- do not "fix" it
+    # back to the NANOEDMAODSIM that McM shows and that check_conditions reports as a note.
+    # cmsDriver picks the output module from this string: `if "NANOAOD" in streamType:
+    # CppType='NanoAODOutputModule'` (ConfigBuilder.py:722), and "NANOAOD" is not a substring of
+    # "NANOEDMAODSIM" -- that value leaves a PoolOutputModule and writes the nano content as EDM
+    # `nanoaodFlatTable` products, with no flat `Muon_pt`-style branch for FLAF or HLepRare.
+    # Central production can use it because its *merge* job rewrites the EDM nano through a
+    # NanoAODOutputModule; DSProd merges with `haddnano.py`, which is a flat-nano hadd and
+    # converts nothing, so the flat file has to come from this step.
     eventcontent: NANOAODSIM
     datatier: NANOAODSIM
 
