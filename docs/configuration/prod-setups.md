@@ -69,6 +69,14 @@ points:
     the sample is N full files plus a stub, which makes a later top-up production awkward: "how
     many more files do I need" stops having a whole-number answer. Round `events_total` **up** to a
     multiple of the product. `--test` is exempt, since it deliberately runs a single short job.
+
+    `events_per_job` belongs to the **setup**, not to a point: a point carrying its own value is
+    refused, because the check above divides by the setup's number while `RunProd` produces the
+    point's. `NanoMergeTask` re-checks the same contract per group from the `produced/` records
+    before merging, so a group whose seeds were produced at different sizes is refused rather than
+    merged into a file of the wrong size — the record's *requested* size is compared, since the
+    delivered count is not always identical (one Run3_2023 job returned 999 of its 1000 events,
+    leaving that merged file at 49 999).
 | `points` | The physics points; their exact shape is defined by the process. `events_total` is **per era** — a mapping `{era: n}`, or a scalar to use the same number everywhere. |
 
 There is **no `gridpack:` field** and **no `crab:` block** — see below.
