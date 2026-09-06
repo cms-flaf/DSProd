@@ -14,10 +14,10 @@ Then run the final task — LAW schedules everything upstream:
 
 ```bash
 source env.sh
-law run NanoMergeTask \
+law run Produce \
   --setup models/X_HH/setups/Run3_XHHbbWW.yaml \
   --points '*_M-800' --test 100 \
-  --workflow local
+  --workflow local --workers 2
 ```
 
 This produces 100 events of the M-800 single-lepton sample in each era of the setup. Add

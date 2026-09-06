@@ -21,14 +21,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import law
+import law.workflow.local
 import luigi
 import yaml
 
-from . import gridpack_store, registry, run_step
+from . import gridpack_store, merge_state, registry, run_step
 from .config import get_global
 from .crab import CrabWorkflow
 from .law_wlcg import WLCGFileSystem, WLCGFileTarget
@@ -1029,7 +1031,61 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     shutil.rmtree(work_dir, ignore_errors=True)
 
 
-class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
+class MergeWorkflowProxy(law.workflow.local.LocalWorkflowProxy):
+    """Yield merge branches as their seeds land, instead of waiting for the generation stage.
+
+    `NanoMergeTask` has no `RunProd` requirement (see `dsprod/merge_state.py` for why neither
+    shape law offers can express "this group's own seeds" without either running the 7 h chain
+    in-process or giving every group its own CRAB submission). Readiness is asked of storage here
+    instead, once per round.
+
+    luigi re-invokes a generator `run()` **from the top** after the dependencies it yielded
+    complete -- it abandons the generator rather than resuming it (`luigi/worker.py`
+    `_run_get_new_deps`). That is exactly the shape this wants: every round re-reads storage, so
+    nothing is carried in memory and a resumed process behaves like a fresh one.
+    """
+
+    #: how long to wait before asking storage again when nothing is ready yet
+    poll_interval = 120.0
+
+    def run(self):
+        task = self.task
+        while True:
+            groups = merge_state.classify(task)
+            pending = [g for g in groups if g.state != merge_state.MERGED]
+            if not pending:
+                return
+            ready = [g for g in pending if g.state == merge_state.READY]
+            if ready:
+                # branch tasks of a local workflow are ordinary luigi tasks, so these run as soon
+                # as they are yielded and the next round picks up whatever landed meanwhile
+                yield luigi.DynamicRequirements(
+                    [task.as_branch(g.branch) for g in ready]
+                )
+                continue
+            broken = [g for g in pending if g.state == merge_state.BROKEN]
+            if broken and len(broken) == len(pending):
+                raise RuntimeError(
+                    f"{len(broken)} merge groups cannot be merged and none can become ready: "
+                    f"their seeds are recorded as produced but the staged files are gone (first: "
+                    f"{broken[0].point} {broken[0].version} group {broken[0].group}). Delete the "
+                    "`produced/` records of those seeds to generate them again."
+                )
+            time.sleep(self.poll_interval)
+
+
+class MergeWorkflow(law.LocalWorkflow):
+    """Carries `MergeWorkflowProxy`.
+
+    The proxy has to hang off a workflow *class*: `_initialize_workflow` reads
+    `self._workflow_cls.workflow_proxy_cls`, and `_workflow_cls` comes from `find_workflow_cls`
+    walking the MRO -- setting `workflow_proxy_cls` on the task itself does nothing.
+    """
+
+    workflow_proxy_cls = MergeWorkflowProxy
+
+
+class NanoMergeTask(Task, MergeWorkflow, HTCondorWorkflow, CrabWorkflow):
     """Merge a group of per-seed nano files into one, then drop the staged inputs (FLAF-friendly)."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 3.0)
@@ -1054,18 +1110,23 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         }
 
     def workflow_requires(self):
-        # `req_different_branching` and not `req`: law copies `branches` through `req()`, so
-        # `--branches 5` on the merge asked for *RunProd* branch 5 rather than for the 50 seeds of
-        # merge group 5. Nothing is narrowed here, so this still waits for the whole generation
-        # stage before any group merges -- 169 of the 192 groups of Run3_2023BPix were complete
-        # with none merged. Fixing that needs the merge to be *submitted* per group rather than
-        # required per workflow, which is a separate change.
-        return {"runprod": RunProd.req_different_branching(self)}
+        # No `RunProd`. A luigi edge to the generation stage is what made 169 of the 192
+        # Run3_2023BPix groups sit complete and unmerged: `workflow_requires()` IS the proxy's
+        # `requires()`, so luigi will not start the merge until every seed of the selection is
+        # done. Neither shape law offers fixes it either -- see `dsprod/merge_state.py`. The
+        # generation stage is submitted once by `Produce`, and `MergeWorkflowProxy` asks storage
+        # which groups are ready.
+        return {
+            "voms": CreateVomsProxy.req(self),
+            "cmssw": InstallCMSSW.req_different_branching(self, workflow="local"),
+        }
 
     def requires(self):
-        era, pi, _, _, seeds = self.branch_data
-        idx = self._runprod_index()
-        return {seed: RunProd.req(self, branch=idx[(era, pi, seed)]) for seed in seeds}
+        # deliberately nothing: `RunProd.req(self, branch=n)` is a *branch* task
+        # (`branch != -1` -> `is_workflow()` False -> the remote proxy is bypassed), so luigi
+        # would run the 7 h generation chain in-process on the submitting machine instead of on
+        # CRAB. The proxy gates on storage instead.
+        return {}
 
     def output(self):
         era, pi, version, group, _ = self.branch_data
@@ -1115,6 +1176,54 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         finally:
             if is_tmp:
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+
+class Produce(Task, law.WrapperTask):
+    """One command for a whole production: generate an era, and merge each group as its seeds land.
+
+        law run Produce --setup <setup> --eras Run3_2023BPix --workflow crab
+
+    The two stages run **concurrently**, not in sequence. `RunProd` is required once, as a whole,
+    so its branches are submitted as one set -- 4800 seeds of an era are one CRAB submission
+    campaign, not one per merge group. `NanoMergeTask` is required alongside it and runs locally,
+    merging each group within minutes of its 50th seed landing (a group is ~140 s of work, almost
+    all of it transfer, and groups become ready roughly every 4 min).
+    """
+
+    workflow = luigi.Parameter(
+        default="htcondor",
+        description="backend for the generation stage (local, htcondor, crab); the merge always "
+        "runs locally, where a 2-minute hadd belongs",
+    )
+
+    def requires(self):
+        # both at once: luigi gives each its own worker, so the generation stage polls its jobs
+        # while the merge polls storage. `workflow` is passed explicitly because `req()` copies
+        # only same-named parameters and the merge must not inherit the generation backend.
+        self._check_workers()
+        return {
+            "generate": RunProd.req(self, workflow=self.workflow),
+            "merge": NanoMergeTask.req(self, workflow="local"),
+        }
+
+    @staticmethod
+    def _check_workers():
+        """Refuse to start on a single worker, where one stage would starve the other.
+
+        luigi hands its only slot to whichever task it schedules first. If that is `RunProd`, the
+        merge never starts and this is exactly the stall it was written to remove; if it is the
+        merge, nothing is ever generated for it to merge.
+        """
+        import luigi.interface
+
+        workers = getattr(luigi.interface.core(), "workers", 1)
+        if workers < 2:
+            raise RuntimeError(
+                f"Produce needs at least two luigi workers, got {workers}: the generation stage "
+                "and the merge run at the same time, and with one worker whichever starts first "
+                "holds the slot until the production ends. Pass `--workers 2` or set "
+                "`[luigi_core] workers: 2` in config/law.cfg."
+            )
 
 
 class BackfillProducedRecords(Task, law.LocalWorkflow):

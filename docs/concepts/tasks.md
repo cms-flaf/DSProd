@@ -174,6 +174,24 @@ inside a job (see [Grid proxy](../getting-started/installation.md#grid-proxy)). 
     the seed it was asked for. Either that seed really is missing — produce it first — or
     `fs_default` is unreachable from the worker, which is the other way a record looks missing.
 
+### `Produce`
+
+The entry point for a whole production: one command that generates an era **and** merges each
+group as its seeds land.
+
+```bash
+law run Produce --setup <setup> --eras Run3_2023BPix --workflow crab --workers 2
+```
+
+It requires both stages at once, so they run concurrently: `RunProd` is required **once, as a
+whole**, so an era's seeds are one submission campaign rather than one per merge group, and
+`NanoMergeTask` runs locally beside it. `--workflow` selects the backend of the generation stage
+only; the merge is always local.
+
+Two workers are the minimum and `Produce` refuses to start with one — luigi hands its only slot to
+whichever task it schedules first, and whichever that is, the other never runs. Set them on the
+command line (`--workers 2`) or once in `config/law.cfg` under `[luigi_core]`.
+
 ### `NanoMergeTask`
 
 Merges a group of per-seed nanos (`files_per_merge` per group) into one output with `haddnano`,
@@ -186,33 +204,25 @@ its seed is recorded as produced. Output is the final, FLAF-facing file:
 <output>/nanoAOD_<version>/<era>/<point>/nano_<version>_<group>.root
 ```
 
-A group waits for **its own seeds only**, not for the generation stage as a whole: the workflow
-requires exactly the `RunProd` branches of the groups it is running, taken from its branch map
-*after* `--branches` has been applied. A group whose 50 seeds are on storage can therefore be
-merged while the other 4750 of the era are still being produced. The requirement used to be the
-entire `RunProd` workflow, and that is how the Run3_2023BPix production reached 169 of its 192
-groups complete with not one merged.
+A group waits for **its own seeds only**, and it does so without a luigi edge to the generation
+stage. `NanoMergeTask` is a **local** workflow whose proxy asks storage, once per round, which
+groups are ready, and yields exactly those branches; luigi re-invokes a generator `run()` from the
+top after the dependencies it yielded complete, so every round re-reads storage and nothing is
+carried in memory. A group whose 50 seeds are recorded can therefore merge while the other 4750
+of the era are still being produced. Merging is cheap enough for this to belong on the submitting
+machine: a group measures ~140 s end to end, of which 11 s is the `haddnano` itself, and groups
+become ready roughly every four minutes.
 
-Three consequences to know about:
-
-- Asking for the whole merge (no `--branches`) requires every `RunProd` branch, which law
-  collapses back to "all branches" — so a production driven through `NanoMergeTask` polls the
-  same job data as `law run RunProd` itself, `data/RunProd/<store>/<backend>_jobs_0To<n>.json`,
-  and merges only once the last seed of the selection is done. A **narrowed** merge run instead
-  gets its own job-data file, named after the branch ranges it requires
-  (`crab_jobs_0To51_100To251.json`). It lands in the same `data/RunProd/<store>/` directory only
-  when it is given the same `--eras` / `--points` / `--test` as the driver: `store_parts()`
-  appends a slug and hash of those, so a merge run narrowed by `--eras` while the production is
-  driven without it keeps a *separate* set of job ids for the same seeds. Either way, two
-  processes that can submit `RunProd` must not run in one area — they would submit the same seeds
-  twice under two sets of job ids. The product paths themselves do not depend on any selection.
-- `--branches` on the merge selects **merge groups** and asks for the seeds behind them. It used
-  to hand the merge's own branch numbers to `RunProd` as if they were seeds, so `--branches 5`
-  waited on `RunProd` branch 5 rather than on the 50 seeds of group 5.
-- A seed selection stops at `RunProd`. Its own requirements branch over gridpacks and eras, so
-  law copying `branches` one level further meant `--branches 10:20` asked `MakeGridpack` for
-  gridpacks 10–19 — while seed 10 needs gridpack 0, whose absence the requirement then never
-  noticed — and dropped the premix list of every era outside the range.
+!!! note "Why the dependency is not a requirement"
+    Neither shape law offers can express "this group's own 50 seeds". `RunProd.req(self,
+    branch=n)` is a **branch** task — `branch != -1`, so `is_workflow()` is False, the remote proxy
+    is bypassed and luigi runs the 7 h chain **in-process on the submitting machine** rather than
+    on CRAB. `RunProd.req_different_branching(self, branches=<50 seeds>)` is a narrowed
+    **workflow**, so every group would carry its own submission — 192 CRAB tasks for one
+    `Run3_2023BPix` era instead of one. And requiring the whole stage is the stall itself:
+    `workflow_requires()` *is* the proxy's `requires()`, so luigi will not start the merge until
+    every seed of the selection is done, which is how that production reached 169 of its 192
+    groups complete with none merged.
 
 ### `BackfillProducedRecords`
 

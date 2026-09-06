@@ -124,14 +124,12 @@ class TestTheSeedSelectionStopsAtRunProd(unittest.TestCase):
             self.assertEqual(reqs[name].branches, ())
             self.assertEqual(len(reqs[name].get_branch_map()), len(selected.prod_eras))
 
-    def test_the_merge_selection_reaches_neither_seeds_nor_gridpacks(self):
-        # the merge's own branch ids are merge *groups*; handed on through `req()` they would have
-        # selected the `RunProd` branches and the gridpacks that happen to share those numbers
-        runprod = merge_task(branches=(6, (7, 8))).workflow_requires()["runprod"]
-        self.assertEqual(
-            runprod.branches, (), "the merge's groups must not select seeds"
-        )
-        self.assertEqual(runprod.workflow_requires()["gridpack"].branches, ())
+    def test_the_merge_requires_no_part_of_the_generation_stage(self):
+        # the strongest form of "a merge selection cannot reach seeds or gridpacks": there is no
+        # edge to reach along. `RunProd` is required once by `Produce`, as a whole.
+        merge = merge_task(branches=(6, (7, 8)))
+        self.assertNotIn("runprod", merge.workflow_requires())
+        self.assertEqual(merge.as_branch(6).requires(), {})
 
 
 class Sentinel(Exception):
