@@ -33,9 +33,13 @@ from dsprod.tasks import RunProd  # noqa: E402
 
 SETUP = "models/X_HH/setups/Run3_XHHbbWW.yaml"
 
-#: branches of the two real productions this is measured on
-BPIX_BRANCHES = 4800
-Y2024_BRANCHES = 87600
+#: branches of the two real productions, over the full 40-mass grid at both spins
+BPIX_BRANCHES = 16000
+Y2024_BRANCHES = 288000
+
+#: a production small enough to fit the fixed default in one wave -- BPix was this size (4800)
+#: before the grid grew, which is the scale `auto` was measured against
+ONE_WAVE_BRANCHES = 4800
 
 #: `_CRAB_DEFAULT_PARALLEL_JOBS` and `_CRAB_AUTO_MAX_PARALLEL_JOBS`
 DEFAULT_PARALLEL_JOBS = 5000
@@ -66,9 +70,9 @@ class TestAutoSizing(unittest.TestCase):
     """`auto_parallel_jobs` on the two scales it was measured at, and at the edges."""
 
     def test_a_production_that_fits_one_wave_keeps_the_fixed_default(self):
-        # BPix scale: the whole production is already submitted in one task, so a ceiling derived
-        # from its size may not lower it -- 4800 in flight would be a *smaller* wave than today
-        self.assertEqual(auto_parallel_jobs(BPIX_BRANCHES), DEFAULT_PARALLEL_JOBS)
+        # the whole production is already submitted in one task, so a ceiling derived from its
+        # size may not lower it -- 4800 in flight would be a *smaller* wave than today
+        self.assertEqual(auto_parallel_jobs(ONE_WAVE_BRANCHES), DEFAULT_PARALLEL_JOBS)
         self.assertEqual(auto_parallel_jobs(12), DEFAULT_PARALLEL_JOBS)
 
     def test_it_grows_with_a_production_that_does_not(self):
@@ -106,15 +110,17 @@ class TestTheProxyApplies(unittest.TestCase):
         self.assertEqual(len(p.task.get_branch_map()), Y2024_BRANCHES)
         self.assertEqual(p.poll_data.n_parallel, CAP)
 
-    def test_auto_changes_nothing_at_the_scale_it_was_measured_against(self):
+    def test_bpix_now_takes_the_cap_too(self):
+        # it took the fixed default at the 4800 branches it was measured on; the 40-mass grid at
+        # both spins puts it at 16000, past the default, so the ceiling is what applies
         p = self.proxy({"parallel_jobs": "auto"})
         self.assertEqual(len(p.task.get_branch_map()), BPIX_BRANCHES)
-        self.assertEqual(p.poll_data.n_parallel, DEFAULT_PARALLEL_JOBS)
+        self.assertEqual(p.poll_data.n_parallel, CAP)
 
     def test_a_narrowed_run_is_sized_by_what_it_actually_submits(self):
         # `--points` reduces the branch map, and `auto` must follow it rather than the setup
         p = self.proxy({"parallel_jobs": "auto"}, points=("*_M-250",))
-        self.assertEqual(len(p.task.get_branch_map()), 300)
+        self.assertEqual(len(p.task.get_branch_map()), 600)
         self.assertEqual(p.poll_data.n_parallel, DEFAULT_PARALLEL_JOBS)
 
     def test_a_configured_number_wins_over_the_sentinel_reading(self):

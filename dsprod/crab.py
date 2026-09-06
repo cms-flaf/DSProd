@@ -107,14 +107,17 @@ def auto_parallel_jobs(
 ):
     """Jobs to keep in flight for a production of `n_branches` branches (`parallel_jobs: auto`).
 
-    Nothing here queues -- 4798 of the 4800 branches of Run3_2023BPix started within half an hour
-    of being submitted -- so the makespan is the ramp plus one job length per *wave*, and the
-    number of waves is `n_branches / parallel_jobs`. Raising the ceiling is therefore the only
-    lever on a production too large to go out at once: at the 87600 branches of the 2024 setup,
-    8000 in flight instead of 5000 is 11.0 waves instead of 17.5, ~-37 % of the makespan.
+    Nothing here queues -- 4798 of the 4800 branches of the Run3_2023BPix production this was
+    measured on started within half an hour of being submitted -- so the makespan is the ramp plus
+    one job length per *wave*, and the number of waves is `n_branches / parallel_jobs`. Raising
+    the ceiling is therefore the only lever on a production too large to go out at once: at the
+    288000 branches of the 2024 setup, 8000 in flight instead of 5000 is 36 waves instead of 57.6,
+    ~-37 % of the makespan.
 
     Never *below* the fixed default, so a production that already fits in one wave is submitted
-    exactly as before -- at BPix scale this returns 5000 and changes nothing.
+    exactly as before. That is a floor, not a description of any particular era: the 40-mass grid
+    at both spins puts Run3_2023BPix at 16000 branches, well past the default, so it now takes the
+    cap too -- it was 4800 when this was measured.
     """
     return max(1, min(int(cap), max(int(default), int(n_branches))))
 

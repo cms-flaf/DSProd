@@ -267,19 +267,23 @@ class TestMergedSizeContract(SetupCase):
         self.assertEqual([t.exists() for t in self.staged(task)], [True] * 3)
         self.assertFalse(task.output().exists())
 
-    def test_a_group_one_event_short_still_merges(self):
-        # the real case the contract is deliberately NOT checked against: a Run3_2023 job returned
-        # 999 of its 1000 events, so that merged file holds 49 999. Refusing the group over one
-        # event would strand it -- re-running the seed yields 999 again -- and `n_out == sum(n_in)`
-        # still proves the merge itself lost nothing
+    def test_a_group_short_of_the_contract_is_refused(self):
+        # what used to pass unnoticed: the inputs agree with each other and with their records,
+        # so the entry-count check is satisfied, and the file still advertises 3000 events while
+        # holding 2999. Exactness is enforced per step now, so this can only mean the merge lost
+        # one -- and one Run3_2023 file was delivered exactly like this
         task = self.branch_task()
         self.produce(task, (1, 2, 3))
         with mock.patch(
             "dsprod.run_step.count_events", return_value=[2999, 1000, 1000, 999]
         ):
-            task.run()
-        self.assertTrue(task.output().exists())
-        self.assertEqual([t.exists() for t in self.staged(task)], [False] * 3)
+            with self.assertRaises(RuntimeError) as ctx:
+                task.run()
+        msg = str(ctx.exception)
+        self.assertIn("2999", msg)
+        self.assertIn("3000", msg)
+        self.assertFalse(task.output().exists())
+        self.assertEqual([t.exists() for t in self.staged(task)], [True] * 3)
 
     def test_a_merge_that_loses_a_file_is_still_reported_as_a_mismatch(self):
         task = self.branch_task()

@@ -194,6 +194,35 @@ def run_step(
 
     cmd = f"{_cmsenv_prefix(step_params)} {driver}"
     ps_call([cmd], shell=True, cwd=work_dir, verbose=verbose)
+    if fileout and n_evt:
+        assert_step_events(step, step_params, work_dir, fileout, n_evt)
+
+
+def assert_step_events(step, step_params, work_dir, fileout, n_evt):
+    """Refuse a step whose output does not hold exactly the events it was asked for.
+
+    `-n <n_evt>` is a request, and a step that returns fewer events fails silently: the file is
+    valid, every later step copies the shortfall forward, and the only check downstream is that a
+    merged file holds the sum of its own inputs -- which is just as true of short ones. One
+    Run3_2023 job returned 999 of its 1000 events, so a delivered merged file holds 49 999 where
+    the sample advertises 50 000, and nothing anywhere noticed.
+
+    Checked per step rather than once at the end, because that is what says *where* the events
+    went. Entering the release to count costs seconds against a step measured in hours.
+
+    A generator that filters events would legitimately return fewer, and no DSProd process does
+    today: such a fragment forces the decay instead. Should one be added, the number a job is
+    asked for and the number it delivers stop being the same quantity, and this check -- not the
+    fragment -- is what has to learn the difference.
+    """
+    produced = count_events(step_params, [os.path.join(work_dir, fileout)], work_dir)[0]
+    if produced == n_evt:
+        return
+    raise RuntimeError(
+        f"the {step} step was asked for {n_evt} events and its output {fileout} holds "
+        f"{produced}. A short step is carried forward by every step after it and ends up in a "
+        f"merged file that advertises a size it does not have, so the job stops here."
+    )
 
 
 def run_chain(

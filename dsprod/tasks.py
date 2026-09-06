@@ -1076,8 +1076,8 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         """(era, point index, seed) -> `RunProd` branch id, built once per merge workflow.
 
         Every merge branch needs the numbering of the *whole* production to locate its own seeds,
-        and law instantiates one task per branch: built per branch, that is the 4800-entry
-        `runprod_branches` list of a BPix era rebuilt for each of the era's 192 groups, in every
+        and law instantiates one task per branch: built per branch, that is the 16000-entry
+        `runprod_branches` list of a BPix era rebuilt for each of the era's 320 groups, in every
         `requires()` call luigi makes on each of them. The workflow instance holds the single
         copy -- a branch task shares its parameters (`exclude_params_workflow` is only `branch`),
         so its numbering is the same one.
@@ -1127,12 +1127,11 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         `n_out == sum(n_in)`, which a group of mixed sizes satisfies because it is self-consistent.
         A sample re-produced at a different `events_per_job` would therefore merge quietly into
         files of the wrong size. The `produced/` records carry the size each seed was asked for,
-        so compare those. Deliberately the *requested* size and not the delivered count: a job
-        does not always return every event it was asked for -- one Run3_2023 job returned 999 of
-        its 1000, leaving that merged file at 49 999 -- and refusing a group over one event would
-        strand it, since re-running the seed yields the same number again. `n_out == sum(n_in)`
-        below is what guards the merge itself. `--test` produces a single short job on purpose and
-        is exempt.
+        so compare those. `--test` produces a single short job on purpose and is exempt.
+
+        The requested size is the right thing to compare because it is what the seeds were asked
+        for; that they delivered it is guaranteed at the source, by the per-step check in
+        `run_step.assert_step_events`, and re-checked on the merged file below.
         """
         if self.test > 0:
             return
@@ -1205,6 +1204,14 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                         raise RuntimeError(
                             f"nano merge entry mismatch: merged {n_out} != sum inputs {n_in}"
                         )
+                    contracted = int(self.prod_setup["events_per_job"]) * len(seeds)
+                    if self.test == 0 and n_out != contracted:
+                        # the inputs agree with each other and with what they were asked for, so
+                        # a merged file of another size means events were lost in the merge
+                        raise RuntimeError(
+                            f"this merged file holds {n_out} events, not the {contracted} its "
+                            f"{len(seeds)} seeds were produced for"
+                        )
             # merged output uploaded and verified -> remove the staged per-seed inputs
             for t in staged:
                 t.remove()
@@ -1271,7 +1278,7 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
 
         name = self.process.point_name(point)
 
-        # Three listings instead of a remote stat per seed. An era has 8300 seeds per nano
+        # Three listings instead of a remote stat per seed. An era has 16000-28000 seeds per nano
         # version, and at one round trip each the stats alone ran for hours -- long enough that
         # the first real migration had to be finished out of band.
         have_records = self._names(
