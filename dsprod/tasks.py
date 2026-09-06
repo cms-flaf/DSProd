@@ -1076,8 +1076,8 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         """(era, point index, seed) -> `RunProd` branch id, built once per merge workflow.
 
         Every merge branch needs the numbering of the *whole* production to locate its own seeds,
-        and law instantiates one task per branch: built per branch, that is the 4800-entry
-        `runprod_branches` list of a BPix era rebuilt for each of the era's 192 groups, in every
+        and law instantiates one task per branch: built per branch, that is the 16000-entry
+        `runprod_branches` list of a BPix era rebuilt for each of the era's 320 groups, in every
         `requires()` call luigi makes on each of them. The workflow instance holds the single
         copy -- a branch task shares its parameters (`exclude_params_workflow` is only `branch`),
         so its numbering is the same one.
@@ -1278,7 +1278,7 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
 
         name = self.process.point_name(point)
 
-        # Three listings instead of a remote stat per seed. An era has 8300 seeds per nano
+        # Three listings instead of a remote stat per seed. An era has 16000-28000 seeds per nano
         # version, and at one round trip each the stats alone ran for hours -- long enough that
         # the first real migration had to be finished out of band.
         have_records = self._names(

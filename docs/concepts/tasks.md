@@ -258,7 +258,7 @@ law run BackfillProducedRecords --setup <setup> --eras Run3_2023 --workflow loca
 
 One branch per (era, point, nano version). Each branch reads the storage with three directory
 listings rather than a stat per seed, and uploads its records `--upload-threads` at a time
-(16 by default): a full era is 8300 seeds per nano version, and at one remote round trip per seed
+(16 by default): a full era is 16000-28000 seeds per nano version, and at one remote round trip per seed
 the migration takes hours instead of minutes. Raise `--workers` and `--upload-threads` on a slow
 endpoint — the work is all latency, not CPU.
 
