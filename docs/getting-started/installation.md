@@ -114,6 +114,12 @@ Renew it with the CRAB client, which asks for your GRID certificate passphrase a
 crab createmyproxy --days 30
 ```
 
+!!! note "Run it from a shell with `env.sh` sourced"
+    DSProd's `crab` wrapper moves `$HOME` to a scratch directory so CRAB's `~/.crab3` never lands
+    on AFS. That directory is node-local and has no `.globus` of its own, so the wrapper points
+    `$X509_USER_CERT`/`$X509_USER_KEY` back at your real home for you. Calling the CRAB client
+    from somewhere else works too — it just uses your real `$HOME` directly.
+
 !!! warning "`myproxy-init` on its own does not work"
     CRAB looks the credential up under `sha1(<your DN>)` and under no other name, and the
     TaskWorker can only retrieve it if the delegation carries the TaskWorker DNs as its retrieval
@@ -131,24 +137,32 @@ Check what is currently stored:
 myproxy-info -s myproxy.cern.ch -l "$(voms-proxy-info -identity | tr -d '\n' | sha1sum | cut -d' ' -f1)"
 ```
 
-#### Renewing it without the passphrase
+#### Delegating from the proxy instead, without the passphrase
 
 `crab createmyproxy` reads the certificate from `$X509_USER_CERT`/`$X509_USER_KEY` when those are
 set, and a VOMS proxy file is itself a certificate with an unencrypted key. Pointing them at the
-proxy therefore delegates from the proxy and never prompts, which is what makes the step
-automatable (a cron job, or a wrapper around your production command):
+proxy delegates from the proxy and never prompts:
 
 ```bash
 X509_USER_CERT=$X509_USER_PROXY X509_USER_KEY=$X509_USER_PROXY \
-    crab createmyproxy --days 7
+    crab createmyproxy --days 30
 ```
 
-The catch is that a credential delegated from a proxy cannot outlive the proxy, so `--days` is
-capped by whatever is left on it — 7 days at most from a `--valid 192:00` proxy, against the 30
-days the certificate route buys. Since the gate needs 5 days, refresh the proxy well before it
-drops below that. Chaining the two does not remove the passphrase altogether: extending a proxy
-past its own expiry still needs the certificate, so plan on typing it either every ~7 days
-(`voms-proxy-init`) or every ~25 days (`crab createmyproxy --days 30`).
+!!! warning "This does not reduce how often you type the passphrase — it increases it"
+    A credential cannot outlive what signed it, and CRAB enforces that by clamping: it reads the
+    remaining whole days of whatever `$X509_USER_CERT` points at and delegates for exactly that
+    long, ignoring `--days` (`CredentialInteractions.py:172,182` — the 30-day default it compares
+    against is an attribute `--days` never touches, so on a proxy the clamp always fires).
+
+    From a `--valid 192:00` proxy the credential is therefore `floor(8 − proxy age)` days, and the
+    5-day gate is satisfied **only while the proxy is younger than about 3 days**. Refreshing the
+    proxy needs the passphrase as surely as the certificate route does — so this route asks for it
+    roughly every 3 days where `crab createmyproxy --days 30` asks every ~25. Once the proxy has a
+    day or less left, the command refuses outright with `YOUR USER CERTIFICATE IS EXPIRED`.
+
+Use it as a stop-gap — to top the credential up from a shell that cannot prompt, when you already
+have a fresh proxy — and not as the way you keep the credential alive. For that, the certificate
+route above is both simpler and far less work.
 
 ## CMSSW on demand
 

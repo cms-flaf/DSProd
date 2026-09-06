@@ -279,8 +279,12 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     `PermissionError: [Errno 13] Permission denied: '/afs/.../.crab3.<pid>'` and law reports it as
     a status-query failure for all jobs. The `crab` wrapper `env.sh` installs therefore points
     `HOME` at `$DSPROD_CRAB_HOME` (default: a per-user directory under `$TMPDIR`), so nothing in a
-    production run needs AFS. law passes `--proxy` to submit, status and kill, so CRAB never needs
-    `~/.globus` from the real home either.
+    production run needs AFS. law passes `--proxy` to submit, status and kill, and that alone
+    makes CRAB skip everything that reads `~/.globus`, so a production run never needs the real
+    home either. `crab createmyproxy` is the exception — you run it yourself, it does read
+    `~/.globus`, and that scratch home is node-local and has none — so the wrapper points
+    `$X509_USER_CERT`/`$X509_USER_KEY` back at your real home for it
+    (see [Installation](../getting-started/installation.md#the-myproxy-credential-crab-needs)).
 
     DSProd still renews Kerberos and the AFS token (`kinit -R` + `aklog`, hourly, from
     `crab_poll_callback`) — but renewal can only extend a ticket that is still valid, so it is not

@@ -746,7 +746,7 @@ class DSProdCrabWorkflowProxy(
         except Exception:
             info = {}
         # law always submits with `crab submit --proxy <file>`, and that makes CRABClient skip its
-        # own delegation and renewal outright (`SubCommand.setupCRABRESTCredentials`), so nothing
+        # own delegation and renewal outright (`SubCommand.handleMyProxy`), so nothing
         # in the submission path tops this credential up. 5 days is the TaskWorker's own minimum.
         if info.get("username") and info.get("timeleft", 0) >= 5 * 24 * 3600:
             kwargs["myproxy_username"] = info["username"]

@@ -2,7 +2,7 @@
 """Which MyProxy credential is allowed to open the CRAB gate.
 
 `crab submit --proxy <file>`, which law always uses, makes CRABClient return from
-`setupCRABRESTCredentials` before it delegates or renews anything, so the credential the
+`handleMyProxy` before it delegates or renews anything, so the credential the
 TaskWorker will retrieve is whatever is already on myproxy.cern.ch -- and it is looked up under
 `sha1(DN)` and under no other name. A credential stored under the plain DN, which is what a bare
 `myproxy-init -d` writes, is therefore not a credential CRAB can use, and letting it open the gate

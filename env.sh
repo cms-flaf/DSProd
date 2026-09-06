@@ -166,10 +166,21 @@ source /cvmfs/cms.cern.ch/cmsset_default.sh
 # included -- so with $HOME on AFS a long production dies the moment the AFS token lapses:
 #   PermissionError: [Errno 13] Permission denied: '/afs/cern.ch/user/x/xyz/.crab3.<pid>'
 # and law reports it as a status-query failure for every job at once. DSProd keeps everything else
-# off AFS, so give CRAB a home of its own too. law passes --proxy to submit/status/kill, so it
-# never needs ~/.globus from the real home.
+# off AFS, so give CRAB a home of its own too.
+_dsprod_real_home="$HOME"
 export HOME="${DSPROD_CRAB_HOME:-${TMPDIR:-/tmp}/dsprod_crab_home_$(id -u)}"
 mkdir -p "$HOME" || exit 1
+# law passes --proxy to submit/status/kill, and that alone makes CRABClient skip everything that
+# reads ~/.globus. `crab createmyproxy` is the exception -- the one command law does not drive,
+# and the one the CRAB gate in dsprod/crab.py tells the user to run -- and the home above is
+# node-local, so on a fresh lxplus node it resolves ~/.globus to an empty directory and fails with
+# "Could not open file or uri for loading certificate". CRABClient reads these two variables
+# before falling back to ~/.globus (CRABClient/ProxyInteractions.py), so point them at the real
+# home rather than un-redirecting HOME or littering it with symlinks.
+if [ -r "$_dsprod_real_home/.globus/usercert.pem" ]; then
+  export X509_USER_CERT="${X509_USER_CERT:-$_dsprod_real_home/.globus/usercert.pem}"
+  export X509_USER_KEY="${X509_USER_KEY:-$_dsprod_real_home/.globus/userkey.pem}"
+fi
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }
 # crab drops a crab.log wherever it is run from, and law calls status/kill without setting a
