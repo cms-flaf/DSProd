@@ -58,7 +58,7 @@ points:
 | `conditions` | The [per-era conditions file](conditions.md) (a DSProd path — framework-level, shared). |
 | `output` | Sub-directory under the user's storage area; products go to `<fs_default>/<output>` (see [settings](settings.md)). |
 | `eras` | Eras to produce (must exist in the conditions file). |
-| `nano_versions` | Per-era list of NanoAOD versions. A `default:` key supplies a fallback; a plain list applies to all eras. |
+| `nano_versions` | Per-era list of NanoAOD versions. A `default:` key supplies a fallback; a plain list applies to all eras. `--nano-versions` narrows it per run (see [below](#running-part-of-a-setup)). |
 | `first_step` / `last_step` | Bound the CMSSW chain `RunProd` runs. |
 | `events_per_job` | Events per `RunProd` seed (seeds per point and era = `ceil(events_total[era] / events_per_job)`). |
 | `files_per_merge` | How many per-seed nanos `NanoMergeTask` groups into one output. |
@@ -91,7 +91,7 @@ silently produce zero events.
 
 ## Running part of a setup
 
-Three options on **every** task make separate setups unnecessary:
+Four options on **every** task make separate setups unnecessary:
 
 ```bash
 # one era of the full grid
@@ -102,6 +102,9 @@ law run RunProd --setup <setup> --points '*_M-800'
 
 # a 100-event end-to-end check of one sample in one era, into a separate `<output>_test` area
 law run RunProd --setup <setup> --eras Run3_2023 --points '*_M-800' --test 100
+
+# only one NanoAOD version, halving what the era costs on storage
+law run RunProd --setup <setup> --eras 'Run3_202[23]*' --nano-versions v12
 ```
 
 - `--eras` takes fnmatch globs matched against the setup's `eras:` (comma-separated for several,
@@ -112,6 +115,12 @@ law run RunProd --setup <setup> --eras Run3_2023 --points '*_M-800' --test 100
 - `--test <n>` produces `<n>` events per point and era in a single job, and redirects the products
   to `<output>_test` so a check can never overwrite a production sample. Gridpacks are exempt: they
   do not depend on the event count, so a test reuses the production ones.
+- `--nano-versions` picks among the versions the setup gives an era. It only ever **narrows**: a
+  version the setup does not list for an era is not produced by asking for it. Each version is a
+  full second copy of the era's events — measured on delivered files, 5.3 kB/event in v12 and
+  6.7 kB/event in v15 — so dropping one is the largest storage lever a production has. Asking for
+  a set that leaves a selected era with nothing is an error naming that era, on the same principle
+  as a pattern that matches nothing.
 
 A pattern that matches nothing is an error, never an empty run. Output paths are keyed by era,
 point and seed — never by branch id — so a selective run writes exactly where the full production
