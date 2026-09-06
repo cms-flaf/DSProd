@@ -187,6 +187,11 @@ class Task(law.Task):
         description="test mode: produce this many events per point and era in a single job, "
         "into a separate `<output>_test` area; 0 (default) = full production",
     )
+    nano_versions = law.CSVParameter(
+        default=(),
+        description="produce only these NanoAOD versions (e.g. 'v12'); default: the versions the "
+        "setup lists for each era. Narrows the setup, never widens it",
+    )
 
     # class-level cache: a single setup is loaded once per process
     setup_path = None
@@ -321,12 +326,28 @@ class Task(law.Task):
             for i, p in enumerate(self.gridpack_points())
         }
 
-    def nano_versions(self, era):
-        """NanoAOD versions to produce for `era` (per-era override, else global default)."""
+    def era_nano_versions(self, era):
+        """NanoAOD versions to produce for `era` (per-era setup entry, else global default),
+        narrowed by `--nano-versions`.
+
+        Every version is a full copy of the era's events, so dropping one halves what the era
+        costs on storage -- a 2022/2023 era measures 5.3 kB/event in v12 and 6.7 in v15. The
+        setup states what an era *can* produce; `--nano-versions` chooses among those at run time,
+        so a cheaper pass needs no second setup file.
+        """
         nv = self.prod_setup.get("nano_versions", {})
-        if isinstance(nv, dict):
-            return nv.get(era, nv.get("default", []))
-        return nv
+        versions = nv.get(era, nv.get("default", [])) if isinstance(nv, dict) else nv
+        versions = list(versions)
+        if not self.nano_versions:
+            return versions
+        selected = [v for v in versions if v in self.nano_versions]
+        if not selected:
+            # the same rule as --eras/--points: refusing to start beats producing nothing
+            raise RuntimeError(
+                f"--nano-versions {','.join(self.nano_versions)} leaves {era} with nothing to "
+                f"produce; the setup gives it {','.join(versions) or '(none)'} in {self.setup}"
+            )
+        return selected
 
     # ---- path / target helpers ---------------------------------------------
     def ana_path(self):
@@ -983,7 +1004,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         point = self.prod_points[pi]
         return {
             v: self.produced_nano_target(era, point, v, seed)
-            for v in self.nano_versions(era)
+            for v in self.era_nano_versions(era)
         }
 
     def run(self):
@@ -1028,7 +1049,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                     n_threads=int(self.n_cpus),
                     pileup_filelist=premix_list,
                 )
-                for version in self.nano_versions(era):
+                for version in self.era_nano_versions(era):
                     nano_out = run_step.run_nano(
                         self.conditions,
                         era,
@@ -1066,7 +1087,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         for era in self.prod_eras:
             for pi, point in enumerate(self.prod_points):
                 seeds = list(range(1, point.n_jobs(era) + 1))
-                for version in self.nano_versions(era):
+                for version in self.era_nano_versions(era):
                     for group, group_seeds in merge_groups(seeds, fpm):
                         branches[bid] = (era, pi, version, group, group_seeds)
                         bid += 1
@@ -1243,7 +1264,7 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
         bid = 0
         for era in self.prod_eras:
             for pi, _ in enumerate(self.prod_points):
-                for version in self.nano_versions(era):
+                for version in self.era_nano_versions(era):
                     branches[bid] = (era, pi, version)
                     bid += 1
         return branches
