@@ -202,12 +202,12 @@ Three consequences to know about:
   and merges only once the last seed of the selection is done. A **narrowed** merge run instead
   gets its own job-data file, named after the branch ranges it requires
   (`crab_jobs_0To51_100To251.json`). It lands in the same `data/RunProd/<store>/` directory only
-  when it is given the same `--eras` / `--points` / `--test` as the driver: `store_parts()`
-  appends a slug and hash of those, so a merge run narrowed by `--eras` while the production is
-  driven without it keeps a *separate* set of job ids for the same seeds. Either way, two
-  processes that can submit `RunProd` must not run in one area — that is what `drive.sh`'s
-  [lock](../operations/long-productions.md#the-lock) is for. The product paths themselves do not
-  depend on any selection.
+  when it is given the same `--eras` / `--points` / `--test` as the production run:
+  `store_parts()` appends a slug and hash of those, so a merge run narrowed by `--eras` while the
+  production runs without it keeps a *separate* set of job ids for the same seeds. Either way,
+  **two processes that can submit `RunProd` must not run in one area** — they would submit the
+  same seeds twice under two sets of job ids. The product paths themselves do not depend on any
+  selection.
 - `--branches` on the merge selects **merge groups** and asks for the seeds behind them. It used
   to hand the merge's own branch numbers to `RunProd` as if they were seeds, so `--branches 5`
   waited on `RunProd` branch 5 rather than on the 50 seeds of group 5.
@@ -259,6 +259,35 @@ is precisely what `broken` looks like without it. Without that check, a single f
 fully merged point reclassified all six of its groups as `broken`, whose remedy would have deleted
 300 records accounting for six delivered files. A report that finds nothing at all anywhere still
 says so, and points at the endpoint, the proxy and the setup's `output` name.
+
+#### Merging while the production runs
+
+A merge group requires only its own seeds, so the finished part of a production can be delivered
+while the rest is still generating. Ask what is ready and run the line it prints:
+
+```bash
+run_tools/merge_status.py --setup <setup> --eras Run3_2023BPix
+# ... then, as printed:
+law run NanoMergeTask --setup <setup> --eras 'Run3_2023BPix' --branches 0:78,96:174 \
+    --workflow crab
+```
+
+The branch numbers are only valid for the selection they were computed for, so pass the same
+`--eras` / `--points` / `--test` to both. `merge_status.py` reads storage only, so it is safe to
+run against an area a production is using.
+
+**Merge only groups the report calls `ready`.** That is what makes running the merge alongside a
+running production safe: a `ready` group has every seed's `produced/` record on storage, so its
+`RunProd` requirement is already complete and nothing of the generation stage can be submitted,
+and the merge jobs themselves live in `data/NanoMergeTask/<store>/`, which the generation side
+never writes. Hand-editing the printed `--branches` to include a `blocked` group is what breaks
+that — those seeds would be submitted a second time under a second set of job ids, and a `RunProd`
+job that starts inside a merge slot [refuses to generate](#runprod) anyway.
+
+Driving the merge instead of `RunProd` (`law run NanoMergeTask` with no `--branches`) is a
+different thing and merges nothing early: it requires every `RunProd` branch, which law collapses
+back to "all branches", so the first merge happens once the last seed of the selection is done —
+the 169-of-192 stall this exists to avoid.
 
 ### `BackfillProducedRecords`
 

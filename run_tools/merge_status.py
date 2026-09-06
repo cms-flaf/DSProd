@@ -326,7 +326,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
         epilog="Every group's state comes from storage alone, so this is safe to run while a "
-        "production is being driven.",
+        "production is running.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
