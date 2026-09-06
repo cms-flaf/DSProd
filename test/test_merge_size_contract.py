@@ -227,10 +227,13 @@ class TestMergedSizeContract(SetupCase):
             )
 
     def counts(self, merged, per_input):
-        """`run_step.count_events` over one merge: the merged file first, then each input."""
+        """`run_step.count_events` over one merge: the merged file first, then each input.
+
+        One call for the whole group -- see test_event_counting.py.
+        """
         return mock.patch(
             "dsprod.run_step.count_events",
-            side_effect=[merged] + [per_input] * self.files_per_merge,
+            return_value=[merged] + [per_input] * self.files_per_merge,
         )
 
     def staged(self, task):
@@ -272,7 +275,7 @@ class TestMergedSizeContract(SetupCase):
         task = self.branch_task()
         self.produce(task, (1, 2, 3))
         with mock.patch(
-            "dsprod.run_step.count_events", side_effect=[2999, 1000, 1000, 999]
+            "dsprod.run_step.count_events", return_value=[2999, 1000, 1000, 999]
         ):
             task.run()
         self.assertTrue(task.output().exists())
@@ -291,7 +294,7 @@ class TestMergedSizeContract(SetupCase):
         task = self.branch_task(test=100)
         self.assertEqual(task.branch_data[4], [1])
         self.produce(task, (1,))
-        with mock.patch("dsprod.run_step.count_events", side_effect=[100, 100]):
+        with mock.patch("dsprod.run_step.count_events", return_value=[100, 100]):
             task.run()
         self.assertTrue(task.output().exists())
 
@@ -325,6 +328,22 @@ class TestMergedSizeContract(SetupCase):
                 task.run()
         self.assertIn("seed 3", str(ctx.exception))
         self.assertIn("events_requested", str(ctx.exception))
+
+    def test_the_whole_group_is_counted_in_one_invocation(self):
+        # entering the nano release dominates the counting, so counting the output and then
+        # each input on its own spent ~10 min of a 50-input group's 3 h slot
+        task = self.branch_task()
+        self.produce(task, (1, 2, 3))
+        with mock.patch(
+            "dsprod.run_step.count_events", return_value=[3000, 1000, 1000, 1000]
+        ) as counted:
+            task.run()
+        counted.assert_called_once()
+        paths = counted.call_args[0][1]
+        # the merged file first, then its inputs in seed order -- `run()` splits the result that
+        # way, so a group counted in another order compares the wrong numbers
+        self.assertEqual(paths[1:], [t.abspath for t in self.staged(task)])
+        self.assertNotIn(paths[0], paths[1:])
 
     def test_the_records_are_the_ones_runprod_declares(self):
         # `_check_contracted_inputs` reads `self.input()`, so a group's records must be exactly

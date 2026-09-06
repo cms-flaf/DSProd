@@ -81,24 +81,37 @@ class SiteStats:
     # -- persistence ------------------------------------------------------------------------
 
     def load(self):
+        """Read the persisted record, dropping every entry that does not read back.
+
+        Nothing in here may raise. The file is advisory -- it rebuilds within a poll or two -- and
+        `load` runs from `__init__`, i.e. from `crab_create_job_manager` while a CRAB workflow is
+        being submitted, so a file this version cannot read (unparseable JSON, or an `events`
+        entry another version shaped differently) would stop a production before its first job
+        over data nothing depends on.
+        """
         try:
             with open(self.path) as f:
                 data = json.load(f)
         except (OSError, ValueError):
             return
-        sites = data.get("sites")
-        if isinstance(sites, dict):
-            self.sites = {
-                name: {
+        sites = data.get("sites") if isinstance(data, dict) else None
+        if not isinstance(sites, dict):
+            return
+        loaded = {}
+        for name, rec in sites.items():
+            # a state file written before placeholders were filtered may hold "Unknown"
+            if not is_site(name) or not isinstance(rec, dict):
+                continue
+            try:
+                loaded[name] = {
                     "events": [
                         (float(t), int(ok)) for t, ok in (rec.get("events") or [])
                     ],
                     "quarantined_until": float(rec.get("quarantined_until") or 0.0),
                 }
-                for name, rec in sites.items()
-                # a state file written before placeholders were filtered may hold "Unknown"
-                if isinstance(rec, dict) and is_site(name)
-            }
+            except (TypeError, ValueError):
+                continue
+        self.sites = loaded
 
     def save(self):
         if not self._dirty:
