@@ -83,8 +83,9 @@ is likewise never shipped: importing from it is local by construction.
 
 - a shell with `env.sh` sourced — it puts DSProd's `crab` wrapper and `python` shim on `PATH`,
   both of which law needs to drive CRAB (see the note below);
-- a VOMS proxy **and** a MyProxy credential valid for at least 5 days (see
-  [Installation](../getting-started/installation.md));
+- a VOMS proxy **and** a MyProxy credential valid for at least 5 days, the latter delegated with
+  `crab createmyproxy` and not with `myproxy-init` (see
+  [Installation](../getting-started/installation.md#the-myproxy-credential-crab-needs));
 - optionally, a `crab:` block in the [global / user config](../configuration/settings.md) — **not**
   in the production setup, so the same setup runs on any backend:
 
@@ -296,7 +297,8 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
 
 ### Debugging CRAB jobs
 
-`crab status`/`crab getlog` re-delegate a MyProxy interactively. To inspect a job without that,
+`crab status`/`crab getlog` re-delegate a MyProxy interactively when run without `--proxy`
+(DSProd always passes it, which is why a production run never renews the credential for you). To inspect a job without that,
 fetch its stdout directly from the task's web directory with your VOMS proxy — remember
 `--capath /etc/grid-security/certificates`, or curl returns HTTP 000. The
 [CRAB backend module](https://github.com/cms-flaf/DSProd/blob/main/dsprod/crab.py) documents the
