@@ -27,6 +27,8 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #   ignore_global_blacklist: true   waive CMS's known-broken-site list (not recommended)
 #   parallel_jobs: 5000             jobs per CRAB task and in flight (--parallel-jobs wins)
 #   refill_fraction: 0.2            min wave size / free slots, as a fraction of parallel_jobs
+#   retry_release_minutes: 45       a retry parked by the wave gate goes out after this long,
+#                                   whatever the wave size (0 = on the next poll)
 #   auto_blacklist:                 quarantine sites whose recent jobs mostly fail (on by default;
 #     enabled: true                 set `auto_blacklist: false` to keep only the static blacklist)
 #     min_failures: 5               failures needed before a site can be quarantined at all
