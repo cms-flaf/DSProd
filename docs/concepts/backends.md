@@ -282,9 +282,12 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     production run needs AFS. law passes `--proxy` to submit, status and kill, and that alone
     makes CRAB skip everything that reads `~/.globus`, so a production run never needs the real
     home either. `crab createmyproxy` is the exception — you run it yourself, it does read
-    `~/.globus`, and that scratch home is node-local and has none — so the wrapper points
-    `$X509_USER_CERT`/`$X509_USER_KEY` back at your real home for it
+    `~/.globus`, and that scratch home is node-local and has none — so the wrapper symlinks the
+    real `.globus` into it, refreshing the link on every call so it self-heals per node
     (see [Installation](../getting-started/installation.md#the-myproxy-credential-crab-needs)).
+    A symlink and not `export X509_USER_CERT=…`: those variables outrank the default proxy in the
+    GSI credential search order, and setting them makes every grid client in the process reach for
+    the encrypted user key instead.
 
     DSProd still renews Kerberos and the AFS token (`kinit -R` + `aklog`, hourly, from
     `crab_poll_callback`) — but renewal can only extend a ticket that is still valid, so it is not

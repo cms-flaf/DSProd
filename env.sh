@@ -173,13 +173,21 @@ mkdir -p "$HOME" || exit 1
 # law passes --proxy to submit/status/kill, and that alone makes CRABClient skip everything that
 # reads ~/.globus. `crab createmyproxy` is the exception -- the one command law does not drive,
 # and the one the CRAB gate in dsprod/crab.py tells the user to run -- and the home above is
-# node-local, so on a fresh lxplus node it resolves ~/.globus to an empty directory and fails with
-# "Could not open file or uri for loading certificate". CRABClient reads these two variables
-# before falling back to ~/.globus (CRABClient/ProxyInteractions.py), so point them at the real
-# home rather than un-redirecting HOME or littering it with symlinks.
-if [ -r "$_dsprod_real_home/.globus/usercert.pem" ]; then
-  export X509_USER_CERT="${X509_USER_CERT:-$_dsprod_real_home/.globus/usercert.pem}"
-  export X509_USER_KEY="${X509_USER_KEY:-$_dsprod_real_home/.globus/userkey.pem}"
+# node-local, so on a fresh lxplus node it resolves ~/.globus to nothing and fails with "Could not
+# open file or uri for loading certificate".
+#
+# Link the real .globus in rather than exporting X509_USER_CERT/X509_USER_KEY at it. Those two sit
+# AHEAD of the default proxy in the GSI credential search order, so exporting them changes how
+# every GSI client in this process authenticates: the `myproxy-info` that `createmyproxy` runs
+# immediately after a *successful* delegation then picks the encrypted user key over the proxy and
+# dies with "unable to get passphrase ... interrupted or cancelled", which CRAB reports as
+# "It seems your proxy has not been delegated to myproxy" even though it was. A symlink changes
+# only what `~` resolves to, which is all that was ever wrong here.
+#
+# Refreshed on every call so it self-heals per node, but never over a real directory.
+if [ -d "$_dsprod_real_home/.globus" ] \
+    && { [ -L "$HOME/.globus" ] || [ ! -e "$HOME/.globus" ]; }; then
+  ln -sfn "$_dsprod_real_home/.globus" "$HOME/.globus"
 fi
 _c=$(ls -d "$ANALYSIS_PATH"/soft/CMSSW_*/ 2>/dev/null | sort | tail -1)
 [ -n "$_c" ] && { cd "$_c/src" && eval $(scramv1 runtime -sh 2>/dev/null); cd - >/dev/null; }

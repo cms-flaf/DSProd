@@ -116,9 +116,9 @@ crab createmyproxy --days 30
 
 !!! note "Run it from a shell with `env.sh` sourced"
     DSProd's `crab` wrapper moves `$HOME` to a scratch directory so CRAB's `~/.crab3` never lands
-    on AFS. That directory is node-local and has no `.globus` of its own, so the wrapper points
-    `$X509_USER_CERT`/`$X509_USER_KEY` back at your real home for you. Calling the CRAB client
-    from somewhere else works too — it just uses your real `$HOME` directly.
+    on AFS. That directory is node-local and has no `.globus` of its own, so the wrapper symlinks
+    your real one into it. Calling the CRAB client from somewhere else works too — it just uses
+    your real `$HOME` directly.
 
 !!! warning "`myproxy-init` on its own does not work"
     CRAB looks the credential up under `sha1(<your DN>)` and under no other name, and the
@@ -147,6 +147,16 @@ proxy delegates from the proxy and never prompts:
 X509_USER_CERT=$X509_USER_PROXY X509_USER_KEY=$X509_USER_PROXY \
     crab createmyproxy --days 30
 ```
+
+!!! danger "Set those two variables for that one command only — never export them"
+    `$X509_USER_CERT`/`$X509_USER_KEY` sit **ahead of the default proxy** in the GSI credential
+    search order, so exporting them changes how every grid client in the shell authenticates, not
+    just the delegation. Point them at your certificate and `myproxy-info` — which
+    `createmyproxy` runs itself, right after delegating — tries to authenticate with the
+    *encrypted* private key, cannot prompt, and fails with
+    `unable to get passphrase ... interrupted or cancelled`. CRAB then reports
+    `It seems your proxy has not been delegated to myproxy` even though the delegation succeeded.
+    Prefix the single command as shown above and the variables die with it.
 
 !!! warning "This does not reduce how often you type the passphrase — it increases it"
     A credential cannot outlive what signed it, and CRAB enforces that by clamping: it reads the
