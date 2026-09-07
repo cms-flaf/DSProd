@@ -737,22 +737,30 @@ class DSProdCrabWorkflowProxy(
                 "voms-proxy-init --voms cms -valid 192:00"
             )
         kwargs = {"proxy": proxy}
-        min_myproxy_seconds = 5 * 24 * 3600
-        for encode in (False, True):
-            try:
-                info = (
-                    law.wlcg.get_myproxy_info(encode_username=encode, silent=True) or {}
-                )
-            except Exception:
-                info = {}
-            if info.get("username") and info.get("timeleft", 0) >= min_myproxy_seconds:
-                kwargs["myproxy_username"] = info["username"]
-                return kwargs
+        # CRABClient names the credential sha1(DN) and looks under no other name
+        # (`CredentialInteractions.createNewMyProxy`), so one stored under the plain DN -- what a
+        # bare `myproxy-init -d` leaves behind -- is invisible to the TaskWorker and must not
+        # satisfy this gate.
+        try:
+            info = law.wlcg.get_myproxy_info(encode_username=True, silent=True) or {}
+        except Exception:
+            info = {}
+        # law always submits with `crab submit --proxy <file>`, and that makes CRABClient skip its
+        # own delegation and renewal outright (`SubCommand.handleMyProxy`), so nothing
+        # in the submission path tops this credential up. 5 days is the TaskWorker's own minimum.
+        if info.get("username") and info.get("timeleft", 0) >= 5 * 24 * 3600:
+            kwargs["myproxy_username"] = info["username"]
+            return kwargs
         raise RuntimeError(
-            "CRAB requires a MyProxy credential valid for >= 5 days (the CRAB server "
-            "retrieves it from myproxy.cern.ch). Run once:\n"
-            "  myproxy-init -d -n -s myproxy.cern.ch\n"
-            "  # verify: myproxy-info -d -s myproxy.cern.ch  (timeleft >= 5 days)"
+            "CRAB requires a MyProxy credential valid for >= 5 days (the CRAB TaskWorker "
+            "retrieves it from myproxy.cern.ch). Renew it with:\n"
+            "  crab createmyproxy --days 30   # asks for the GRID certificate passphrase\n"
+            "`myproxy-init` alone is not enough: it stores the credential under the plain DN and "
+            "without the TaskWorker retrieval policy, so CRAB never sees it. To renew without "
+            "the passphrase, delegate from the VOMS proxy instead -- the credential then expires "
+            "with the proxy, so keep the proxy longer than 5 days:\n"
+            "  X509_USER_CERT=$X509_USER_PROXY X509_USER_KEY=$X509_USER_PROXY \\\n"
+            "      crab createmyproxy --days 7"
         )
 
 
