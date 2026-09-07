@@ -88,6 +88,10 @@ class CrabWrapperHome(unittest.TestCase):
         env = dict(os.environ)
         for var in ("X509_USER_CERT", "X509_USER_KEY"):
             env.pop(var, None)
+        # Stand in for a shell that has already done cmsenv, so the wrapper reaches the hand-over
+        # on any host: what it does to $HOME does not depend on where CMSSW came from, and the
+        # bootstrap that would otherwise supply one needs cvmfs (see test_crab_wrapper_cmssw).
+        env["CMSSW_VERSION"] = "CMSSW_15_0_15_patch4"
         env["HOME"] = self.real_home
         env["DSPROD_CRAB_HOME"] = self.scratch
         env["ANALYSIS_PATH"] = self.tmp
