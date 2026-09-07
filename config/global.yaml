@@ -39,9 +39,13 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #     window_hours: 24              outcomes older than this stop counting
 #     max_sites: 10                 never quarantine more than this many sites at once
 crab:
-  max_memory_mb: 2500
-  # Ceiling on the cores a CRAB job may request. It caps each task's own `n_cpus`, so a value
-  # below it silently makes the job single-threaded on CRAB while HTCondor still gets `n_cpus`
-  # (`RunProd` asks for 2). Memory follows: the request is raised to `max_memory_mb_per_core`
-  # (2500) per core, within CRAB's own limit of max(5000, 2500 * numCores) MB.
+  # Ceiling on the cores a CRAB job may request. CRAB accepts only 1, 2, 4 or 8 cores, and sells
+  # at most 2500 MB per core -- 3000 MB for a single-core job. This caps both a task's own
+  # `n_cpus` and the cores its `memory` request needs, so a value below what a task asks for makes
+  # that task refuse to submit rather than silently under-request (a shrunk request is a kill
+  # threshold, not a smaller reservation). Per-job memory is set on the task itself, next to
+  # `n_cpus`; `memory_mb` below is only a default for tasks that name none.
   max_cores: 4
+  # memory_mb: 0        # per-job request in MB for tasks with no `memory`; 0 = max(3000, 2500 * n)
+  # mb_per_core: 2500   # CRAB's own limits; override only if CMS changes them
+  # mb_single_core: 3000

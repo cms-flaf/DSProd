@@ -91,8 +91,8 @@ is likewise never shipped: importing from it is local by construction.
 
 ```yaml
 crab:
-  max_memory_mb: 2500
-  max_cores: 4          # ceiling on a job's cores; caps each task's own n_cpus
+  max_cores: 4          # ceiling on a job's cores (1, 2, 4 or 8); caps each task's own n_cpus
+  # memory_mb: 0        # default per-job request in MB; 0 = CRAB's max(3000, 2500 * numCores)
   # parallel_jobs: 5000     # jobs per CRAB task / in flight; `auto` = scale with the run
   # refill_fraction: 0.2    # min wave size / free slots, as a fraction of parallel_jobs
   # retry_release_minutes: 45  # release a parked retry after this long, whatever the wave size
