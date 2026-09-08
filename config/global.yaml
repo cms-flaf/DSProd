@@ -14,6 +14,12 @@
 # DNS), while xrootd reads and writes both work. Same choice as FLAF's fs_anaCacheTuple.
 fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 
+# `fs_watchdog` (optional) holds the watchdog's heartbeat flags; unset = `fs_default`. Worth
+# pointing elsewhere: the flags are one small overwrite per job per interval on a single flat
+# directory, a metadata load quite unlike the products' few large writes, and a heartbeat says
+# most about a job when the endpoint it is written to is not the one the products go to. e.g.
+#   fs_watchdog: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd_watchdog/
+
 # CRAB backend: compute settings only. CRAB never stages out (DSProd owns all I/O), so there is
 # no CRAB output location to configure.
 #

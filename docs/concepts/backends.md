@@ -311,7 +311,7 @@ polls: they had started promptly, run for ~2.7 h, then stopped reporting, and no
 reclaimed them until CRAB's 24 h wall-clock rule fired 21 hours later. 598 of 600 branches were
 done and the production simply waited.
 
-So each running CRAB job refreshes a flag file in **one flat directory** on `fs_default`
+So each running CRAB job refreshes a flag file in **one flat directory** on `fs_watchdog`
 (`<output>/heartbeat/<task>_<run>/<branch>`), and the driver lists that directory once per interval
 — one remote call however many jobs are in flight, about 1.6 s at 3000 entries. A job whose flag
 has not moved for `missed_checks` intervals is rewritten as **failed** on that poll, which puts it
@@ -319,6 +319,7 @@ through law's ordinary retry path: the attempt is counted and the branches go ba
 like any other failure. There is no separate resubmission mechanism.
 
 ```yaml
+fs_watchdog: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd_watchdog/  # unset = fs_default
 crab:
   watchdog: false          # switch it off entirely
   # or tune it:
@@ -326,6 +327,12 @@ crab:
     interval_minutes: 30   # refresh/check period
     missed_checks: 2       # -> declared dead after 60 min of silence
 ```
+
+`fs_watchdog` is optional and defaults to `fs_default`. There are two reasons to separate them: the
+flags are one small overwrite per job per interval on a single directory — a metadata load quite
+unlike the products' few large writes — and a heartbeat is most informative when the endpoint it is
+written to is not the one the products go to, so that a products-storage outage does not look like
+a fleet of dead jobs. (It would not be read as one anyway: see the refusal rules below.)
 
 The watchdog is **CRAB-only**: the failure is a batch system holding a slot it cannot account for,
 and a `local` run has no slot to hold. Jobs detect this themselves — the heartbeat is written only

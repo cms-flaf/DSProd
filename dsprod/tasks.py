@@ -50,33 +50,46 @@ law.contrib.load("htcondor")
 _REMOTE_PREFIXES = ("davs://", "root://", "gsiftp://", "/eos/")
 
 #: lazily-built default file system (a remote one needs a valid VOMS proxy at construction time).
-_fs_default = None
+_fs_cache = {}
 
 
-def get_fs():
-    """The default file system, from `fs_default` in the global/user config (FLAF notation): one
-    URI carrying protocol, host and base path, e.g.
+def get_fs(key="fs_default", fallback=None):
+    """A file system named by an `fs_*` key of the global/user config (FLAF notation): one URI
+    carrying protocol, host and base path, e.g.
     `davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/`. A plain `/...` path gives a local
     file system instead. Remote access goes through the gfal-CLI interface, which also works on
     CRAB workers (where the gfal2 python module law.contrib.gfal needs is unavailable).
 
-    Every backend (local, htcondor, crab) writes to this one file system.
+    Every product of every backend (local, htcondor, crab) goes to `fs_default`. `fallback` names
+    the key to use when `key` is not configured, which is how an optional file system defaults to
+    the products' one.
     """
-    global _fs_default
-    if _fs_default is None:
-        base = get_global().get("fs_default")
-        if not base:
-            raise RuntimeError(
-                "No default file system defined. Please define `fs_default` in "
-                "config/user_custom.yaml, e.g.\n"
-                "  fs_default: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/"
-            )
-        _fs_default = (
-            law.LocalFileSystem(base=base)
-            if base.startswith("/")
-            else WLCGFileSystem(base)
+    if key in _fs_cache:
+        return _fs_cache[key]
+    base = get_global().get(key)
+    if not base:
+        if fallback:
+            return get_fs(fallback)
+        raise RuntimeError(
+            f"No file system defined for `{key}`. Please define it in "
+            "config/user_custom.yaml, e.g.\n"
+            f"  {key}: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/"
         )
-    return _fs_default
+    _fs_cache[key] = (
+        law.LocalFileSystem(base=base) if base.startswith("/") else WLCGFileSystem(base)
+    )
+    return _fs_cache[key]
+
+
+def get_watchdog_fs():
+    """Where the watchdog's heartbeat flags live.
+
+    `fs_watchdog` if configured, else `fs_default`. Worth separating: the flags are one small
+    overwrite per job per interval on a single directory, which is a metadata load quite unlike
+    the products' few large writes, and a heartbeat is most useful on an endpoint whose
+    availability is independent of the one the products go to.
+    """
+    return get_fs("fs_watchdog", fallback="fs_default")
 
 
 def copy_param(ref_param, new_default):
@@ -413,20 +426,24 @@ class Task(law.Task):
         return os.path.join(self.storage_name(), *parts)
 
     def heartbeat_dir_path(self):
-        """The one flat directory holding a flag per live job of this run, on `fs_default`.
+        """The one flat directory holding a flag per live job of this run, on `fs_watchdog`.
 
         Flat and per-run: the driver lists it once per interval whatever the job count, and a
-        differently-narrowed run gets its own directory because it renumbers its branches.
+        differently-narrowed run gets its own directory because it renumbers its branches. The
+        storage name still prefixes it, so one watchdog endpoint can serve several productions
+        and a `--test` run cannot be confused with the production it shadows.
         """
         cls, name = self.store_parts()
         return self.storage_path(HEARTBEAT_DIR, f"{cls}_{name}")
 
     def heartbeat_dir_uri(self):
-        return self.remote_target(self.heartbeat_dir_path()).uri()
+        return self.remote_target(self.heartbeat_dir_path(), fs=get_watchdog_fs()).uri()
 
     def heartbeat_target(self, branch):
         """This branch's flag. Named by branch alone -- the driver maps it back through job_data."""
-        return self.remote_target(self.heartbeat_dir_path(), str(branch))
+        return self.remote_target(
+            self.heartbeat_dir_path(), str(branch), fs=get_watchdog_fs()
+        )
 
     def staged_nano_target(self, era, point, version, seed):
         """The per-seed nano file `RunProd` stages for `NanoMergeTask` to consume.

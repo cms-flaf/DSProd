@@ -197,6 +197,55 @@ class TheSettings(unittest.TestCase):
             self.assertIn(key, text, f"{key} is not mentioned in config/global.yaml")
 
 
+class WhereTheFlagsLive(unittest.TestCase):
+    """`fs_watchdog` is a separate endpoint so the heartbeat load, and the heartbeat's own
+    availability, are independent of the storage the products go to."""
+
+    def setUp(self):
+        from dsprod import tasks
+
+        self.tasks = tasks
+        tasks._fs_cache.clear()
+        self.addCleanup(tasks._fs_cache.clear)
+
+    @staticmethod
+    def base_of(fs):
+        # law's LocalFileSystem.base is a str; the remote one's is a list of uris
+        base = fs.base if isinstance(fs.base, str) else fs.base[0]
+        return base.rstrip("/")
+
+    def _fs(self, cfg):
+        with mock.patch("dsprod.tasks.get_global", return_value=cfg):
+            return self.tasks.get_watchdog_fs()
+
+    def test_it_is_used_when_configured(self):
+        fs = self._fs({"fs_default": "/products", "fs_watchdog": "/beats"})
+        self.assertEqual(self.base_of(fs), "/beats")
+
+    def test_it_falls_back_to_the_products_file_system(self):
+        fs = self._fs({"fs_default": "/products"})
+        self.assertEqual(self.base_of(fs), "/products")
+
+    def test_the_products_file_system_is_untouched_by_it(self):
+        with mock.patch(
+            "dsprod.tasks.get_global",
+            return_value={"fs_default": "/products", "fs_watchdog": "/beats"},
+        ):
+            self.assertEqual(self.base_of(self.tasks.get_fs()), "/products")
+
+    def test_a_missing_key_with_no_fallback_says_which_key(self):
+        with mock.patch("dsprod.tasks.get_global", return_value={}):
+            with self.assertRaises(RuntimeError) as caught:
+                self.tasks.get_fs("fs_watchdog")
+            self.assertIn("fs_watchdog", str(caught.exception))
+
+    def test_each_file_system_is_built_once(self):
+        cfg = {"fs_default": "/products", "fs_watchdog": "/beats"}
+        with mock.patch("dsprod.tasks.get_global", return_value=cfg):
+            self.assertIs(self.tasks.get_watchdog_fs(), self.tasks.get_watchdog_fs())
+            self.assertIsNot(self.tasks.get_watchdog_fs(), self.tasks.get_fs())
+
+
 class HowTheVerdictReachesLaw(unittest.TestCase):
     """The verdict is applied by rewriting the status law just fetched, so law's own retry path
     does the resubmission -- there is deliberately no second mechanism."""
