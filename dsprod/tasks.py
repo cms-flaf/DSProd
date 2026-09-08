@@ -527,6 +527,8 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     # would silently drop a `--RunProd-retries` given on the command line.
     exclude_params_req = law.htcondor.HTCondorWorkflow.exclude_params_req | {
         "max_runtime",
+        "memory",
+        "crab_memory",
         "n_cpus",
         "retries",
         "tolerance",
@@ -540,6 +542,11 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     )
     n_cpus = luigi.IntParameter(
         default=1, significant=False, description="number of CPU slots"
+    )
+    memory = luigi.IntParameter(
+        default=0,
+        significant=False,
+        description="memory per job in MB; 0 = CRAB's max(3000, 2500 * numCores)",
     )
     krenew = luigi.IntParameter(
         default=1, significant=False, description="call 'kinit -R' each krenew hours"
@@ -565,6 +572,11 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
         n_cpus = int(self.n_cpus)
         if n_cpus > 1:
             config.custom_content.append(("RequestCpus", n_cpus))
+        # `memory` is deliberately NOT turned into a `RequestMemory` here. On CRAB the number is a
+        # kill threshold, so it belongs at CRAB's ceiling; an HTCondor RequestMemory is a slot
+        # reservation, so the same value would ask a 4-core CERN slot for 10 GB against the ~2 GB
+        # per core the pool provisions, and restrict matching on a backend that works today. If it
+        # is ever wanted here, the right value is the measured need, not the CRAB ceiling.
 
         log_path = os.path.abspath(os.path.join(self.ana_data_path(), "logs"))
         os.makedirs(log_path, exist_ok=True)
@@ -922,13 +934,23 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Fused GEN->NANO production for one (era, point, seed); stages one nano per version."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 24.0)
-    # 4 cores, i.e. 10 GB on CRAB (2500 MB per core, which is also its cap for four). Measured
-    # over a finished 4800-job era: the median job runs 7.07 h on two cores and 4.38 h on four,
-    # for 34 % more core-hours. It buys throughput, not a shorter tail -- the slowest 1 % of jobs
-    # run at cpu/wall 0.28 and barely move (p99 1.07x) -- so drop this line if the core-hours are
-    # worth more than the wall-clock. A single-threaded job of this chain peaked at 3042 MB, above
-    # what a one-core slot offers, so one core is not an option.
+    # 4 cores. Measured over a finished 4800-job era: the median job runs 7.07 h on two cores and
+    # 4.38 h on four, i.e. 17.5 core-hours against 14.1, so +24 % core-hours for -38 % wall clock.
+    # It buys throughput, not a shorter tail -- the slowest 1 % of jobs run at cpu/wall 0.28 and
+    # barely move (p99 1.07x). The cores are earning it: over 600 jobs the median CPU efficiency
+    # is 85 % of four cores (mean 82 %, i.e. 3.27 busy), 91 % of jobs above 70 %. One core is not
+    # an option either way -- the single-threaded chain peaked at 3042 MB against CRAB's 3000 MB
+    # single-core ceiling.
     n_cpus = copy_param(HTCondorWorkflow.n_cpus, 4)
+
+    # 10000 MB is CRAB's ceiling at four cores, max(3000, 2500 * numCores) -- the largest
+    # submittable value, not a preference, and asking for less is strictly worse. CRAB enforces
+    # maxMemoryMB by removing the job (exit 50660) and never retries it, DSProd does not escalate
+    # memory on retry, and the peak repeats on every attempt, so a clipped branch is a dead branch
+    # and one dead branch ends the workflow on `acceptance`. Measured 4-thread peak of the payload
+    # is 5404 MB (the DIGI+premix+HLT step; peak RSS ~ 2503 + 743 per stream), the 4-core p99 over
+    # 594 jobs is 6018 and the worst job ever recorded anywhere in this production is 8811.
+    memory = copy_param(HTCondorWorkflow.memory, 10000)
 
     # 4 attempts per job: law submits a job once and then resubmits it `retries` times, so the
     # budget a branch really burns is `retries + 1`. (It then offers the exhausted job to the
@@ -1076,6 +1098,14 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     """Merge a group of per-seed nano files into one, then drop the staged inputs (FLAF-friendly)."""
 
     max_runtime = copy_param(HTCondorWorkflow.max_runtime, 3.0)
+
+    # `haddnano` is single-threaded, so `n_cpus` stays 1 and HTCondor is still asked for one CPU --
+    # but a one-core CRAB job may not ask for more than 3000 MB, and this merge has peaked at
+    # 4254 MB and taken 5 memory kills (exit 50660) at the 2500 MB a one-core request used to
+    # produce. 5000 MB is the smallest value that covers it, and CRAB sells memory only in
+    # per-core units, so asking for it raises `numCores` to 2 for the CRAB submission alone. The
+    # cost is one idle core on a short job; the alternative is a request no value can make safe.
+    memory = copy_param(HTCondorWorkflow.memory, 5000)
 
     #: `_runprod_index`, held on the workflow and shared by all of its branch tasks
     _runprod_index_cache = None

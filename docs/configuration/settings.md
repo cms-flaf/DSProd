@@ -61,8 +61,10 @@ it is described in [Architecture](../concepts/architecture.md#storage-layout).
 
 ```yaml
 crab:
-  max_memory_mb: 2500
   max_cores: 4
+  # memory_mb: 0                    # optional; default per-job request in MB (0 = CRAB's own max)
+  # mb_per_core: 2500               # optional; CRAB's own limits, override only if CMS changes them
+  # mb_single_core: 3000
   # whitelist: [ T2_CH_CERN, ... ]  # optional; unset (default) = every tier T1_*/T2_*/T3_*
   # blacklist: [ ... ]              # optional; exclude misbehaving sites
   # ignore_global_blacklist: true   # optional; waive CMS's known-broken-site list (not recommended)
@@ -72,12 +74,23 @@ crab:
   # auto_blacklist: { ... }         # optional; see Backends -> Failing sites (on by default)
 ```
 
-!!! warning "`max_cores` caps every task's `n_cpus`"
-    A CRAB job gets `min(max_cores, <task>.n_cpus)` cores — so a `max_cores` below a task's own
-    `n_cpus` silently makes it single-threaded on CRAB while HTCondor still gives it `n_cpus`
-    (`RunProd` asks for 4). Memory follows the cores: the request is raised to
-    `max_memory_mb_per_core` (2500 by default) per core, within CRAB's own limit of
-    `max(5000, 2500 * numCores)` MB.
+### Cores and memory are asked for separately
+
+Each task declares its own `n_cpus` and `memory` (in MB) next to its `max_runtime`; `RunProd` asks
+for 4 cores and 10000 MB, `NanoMergeTask` for 1 CPU and 5000 MB. `--<task>-crab-memory` overrides
+the memory for one run. A `memory` of 0 falls back to `crab.memory_mb`, and then to CRAB's own
+`max(3000, 2500 * numCores)`.
+
+!!! warning "CRAB sells memory only in per-core units, so `max_cores` bounds both"
+    CRAB accepts only **1, 2, 4 or 8** cores and refuses any task above
+    `max(3000, 2500 × numCores)` MB. So a memory request larger than the task's cores can hold
+    raises `numCores` for the CRAB submission (HTCondor still gets `n_cpus`) — and if
+    `max_cores` cannot hold it, the task **refuses to submit** rather than quietly asking for
+    less. That is deliberate: on CRAB the number is a kill threshold (a job over it is removed
+    with exit 50660 and never retried), so a silently shrunk request is a silently dead branch.
+
+    `max_cores` still caps each task's `n_cpus` as well, so a value below a task's own `n_cpus`
+    makes it run with fewer threads on CRAB than on HTCondor.
 
 The `crab:` block holds **compute settings only** — CRAB never stages out (DSProd owns all I/O),
 so there is no CRAB output location to configure. These can also be overridden per run on the

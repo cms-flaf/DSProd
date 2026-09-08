@@ -12,8 +12,8 @@ backend. Only the compute knobs are configurable, in the merged global config
 (``config/global.yaml`` + ``user_custom.yaml``), never in a production setup::
 
     crab:
-      max_memory_mb: 2500
-      max_cores: 1
+      max_cores: 4             # 1, 2, 4 or 8; caps a task's cores AND what its memory may need
+      # memory_mb: 0           # optional default request in MB; 0 = max(3000, 2500 * numCores)
       # whitelist: [ ... ]       # optional; default = every tier (T1_*, T2_*, T3_*)
       # blacklist: [ ... ]       # optional; exclude sites that fail to reach the storage
       # parallel_jobs: 5000      # jobs per CRAB task / in flight; --parallel-jobs wins
@@ -98,6 +98,28 @@ _CRAB_DEFAULT_REFILL_FRACTION = 0.2
 #: (7.1 h at the median) per retry generation: over a 4800-job production the parked retries
 #: waited 11.35 h at the median, ~10.5 h of the 68.4 h it took to reach 99.4 %.
 _CRAB_DEFAULT_RETRY_RELEASE_MINUTES = 45
+
+#: CRAB's own resource limits, from ServerUtilities.MAX_MEMORY_PER_CORE / MAX_MEMORY_SINGLE_CORE.
+#: The client refuses a task above max(MAX_MEMORY_SINGLE_CORE, numCores * MAX_MEMORY_PER_CORE), so
+#: memory can only ever be asked for *downward* -- more than 2500 MB per core is bought with cores.
+CRAB_MB_PER_CORE = 2500
+CRAB_MB_SINGLE_CORE = 3000
+
+#: the only values `JobType.numCores` accepts (CRABClient/JobType/CMSSWConfig.py); anything else is
+#: refused at submit, which a computed core count can otherwise walk straight into
+CRAB_ALLOWED_CORES = (1, 2, 4, 8)
+
+
+def _crab_cores_up(n):
+    """The smallest core count CRAB accepts that is at least `n`."""
+    return next((c for c in CRAB_ALLOWED_CORES if c >= n), CRAB_ALLOWED_CORES[-1])
+
+
+def _crab_cores_down(n):
+    """The largest core count CRAB accepts that is at most `n`."""
+    return next(
+        (c for c in reversed(CRAB_ALLOWED_CORES) if c <= n), CRAB_ALLOWED_CORES[0]
+    )
 
 
 def auto_parallel_jobs(
@@ -796,7 +818,8 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     crab_memory = luigi.IntParameter(
         default=-1,
         significant=False,
-        description="max memory per CRAB job in MB; -1 = auto",
+        description="memory per CRAB job in MB for this run; <= 0 = use the task's own `memory`, "
+        "else `crab.memory_mb`, else CRAB's max(3000, 2500 * numCores)",
     )
     crab_whitelist = law.CSVParameter(
         default=(),
@@ -819,7 +842,17 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         identical for htcondor and crab."""
         from .config import get_global
 
-        return get_global().get("crab", {}) or {}
+        cfg = get_global().get("crab", {}) or {}
+        for legacy in ("max_memory_mb", "max_memory_mb_per_core"):
+            if legacy in cfg:
+                raise RuntimeError(
+                    f"`crab.{legacy}` is no longer used and would now mean something different: "
+                    "it used to seed a formula that immediately overwrote it, so its value was "
+                    "never the request. Memory is now asked for per task -- set `memory` on the "
+                    "task (or `--<task>-crab-memory` for one run, or `crab.memory_mb` as a global "
+                    f"default) and delete `crab.{legacy}` from the config."
+                )
+        return cfg
 
     def _ensure_crab_pset(self, n_threads):
         """Minimal PSet whose numberOfThreads matches JobType.numCores (CRAB requires it)."""
@@ -952,19 +985,54 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return manager
 
     def crab_job_config(self, config, job_nums, branches=None):
+        cfg = self._crab_cfg()
+        mb_per_core = int(cfg.get("mb_per_core", CRAB_MB_PER_CORE))
+        mb_single_core = int(cfg.get("mb_single_core", CRAB_MB_SINGLE_CORE))
+        max_cores = _crab_cores_down(max(1, int(cfg.get("max_cores", 8))))
         n_cpus = max(1, int(getattr(self, "n_cpus", 1) or 1))
-        mem = int(self.crab_memory)
-        if mem <= 0:
-            mem = int(self._crab_cfg().get("max_memory_mb", n_cpus * 2500))
-        mb_per_core = int(self._crab_cfg().get("max_memory_mb_per_core", 2500))
-        max_cores = int(self._crab_cfg().get("max_cores", 8))
-        n_cores = max(n_cpus, (mem + mb_per_core - 1) // mb_per_core)
-        n_cores = max(1, min(n_cores, max_cores))
-        mem = max(mem, n_cores * mb_per_core)
-        # the CRAB client refuses a task above max(5000, 2500 * numCores) MB, so clamp instead of
-        # letting a generous `max_memory_mb` (with a low `max_cores`) fail the whole submission
-        mem = min(mem, max(5000, 2500 * n_cores))
 
+        # Memory is chosen independently of the cores: the first explicit value wins and nothing
+        # raises it afterwards. Any value <= 0 (and a yaml `null`) means "not set".
+        mem = 0
+        for candidate in (
+            int(self.crab_memory or 0),  # --<task>-crab-memory, this run only
+            int(getattr(self, "memory", 0) or 0),  # the task's own request
+            int(cfg.get("memory_mb", 0) or 0),  # a global default, if any
+        ):
+            if candidate > 0:
+                mem = candidate
+                break
+        if 0 < mem < 1000:
+            raise ValueError(
+                f"{self.task_family}: a memory request of {mem} is read as MB, and {mem} MB per "
+                "job cannot be meant -- pass the value in MB"
+            )
+        mem_auto = mem <= 0
+
+        # Cores are the threads the payload runs, raised to whatever the memory request needs
+        # (CRAB sells memory only in per-core units), snapped to a value CRAB accepts, then capped.
+        needed = n_cpus if mem_auto else max(n_cpus, -(-mem // mb_per_core))
+        n_cores = max(1, min(_crab_cores_up(needed), max_cores))
+
+        # Only with no explicit request does the per-core formula apply, and only once the core
+        # count is known.
+        ceiling = max(mb_single_core, n_cores * mb_per_core)
+        if mem_auto:
+            mem = ceiling
+        elif mem > ceiling:
+            # Never clamp an explicit request down: CRAB enforces maxMemoryMB as a kill threshold
+            # (PeriodicRemove on MemoryUsage > RequestMemory, exit 50660, never retried) and does
+            # not escalate on retry, so a silently shrunk request is a silently dead branch. Fail
+            # at submit instead, where it is one message rather than 4 lost attempts per job.
+            want = _crab_cores_up(-(-mem // mb_per_core))
+            raise ValueError(
+                f"{self.task_family}: {mem} MB per job needs numCores >= {want}, but "
+                f"crab.max_cores caps this task at {n_cores}, where CRAB allows at most "
+                f"{ceiling} MB (max({mb_single_core}, numCores * {mb_per_core})). Raise "
+                f"crab.max_cores to {want}, or ask for {ceiling} MB or less."
+            )
+
+        # the pset must declare exactly `numCores` threads or the client refuses the task
         config.crab.JobType.psetName = self._ensure_crab_pset(n_cores)
         config.crab.JobType.numCores = n_cores
         config.crab.JobType.maxMemoryMB = mem
