@@ -168,7 +168,10 @@ class StallWatchdog:
     """
 
     def __init__(self, flag_dir_uri, cfg=None, voms_token=None, publish=None):
-        self.flag_dir = flag_dir_uri
+        # may be a callable: resolving the uri builds the remote file system, which shells out to
+        # `voms-proxy-info`, and this object is constructed alongside the job manager -- long
+        # before anything is listed, and in tests that have no grid environment at all
+        self._flag_dir = flag_dir_uri
         self.cfg = dict(DEFAULTS) if cfg is None else dict(cfg)
         self.voms_token = voms_token
         self.publish = publish or (lambda msg: None)
@@ -179,6 +182,12 @@ class StallWatchdog:
         self._per_branch = {}  # branch -> verdicts issued so far
         self._by_id = {}  # (crab_num, task_name) -> (job_num, branches)
         self._issued_this_interval = 0
+
+    @property
+    def flag_dir(self):
+        if callable(self._flag_dir):
+            self._flag_dir = self._flag_dir()
+        return self._flag_dir
 
     @property
     def enabled(self):

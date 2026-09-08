@@ -988,7 +988,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         """
         if self._watchdog_obj is None:
             self._watchdog_obj = StallWatchdog(
-                self.heartbeat_dir_uri(),
+                self.heartbeat_dir_uri,
                 watchdog_config(self._crab_cfg()),
                 voms_token=os.environ.get("X509_USER_PROXY") or None,
                 publish=self.publish_message,
