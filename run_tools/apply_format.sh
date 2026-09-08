@@ -39,6 +39,15 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
     fi
 fi
 
+# Undefined and redefined names, on the whole package rather than the changed files: an import
+# dropped in one file is only visible where the name is USED, which may be a file this branch did
+# not touch. This is the check that would have caught a missing `Heartbeat` import whose only
+# caller runs inside a CRAB job, where no test reaches it.
+if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
+    echo "Checking for undefined names (flake8 F821/F811)"
+    flake8 --select=F821,F811 "$this_dir/dsprod" "$this_dir/test" || exit 1
+fi
+
 if [ ${#YAML_FILES[@]} -gt 0 ]; then
     echo "Checking YAML formatting for: ${YAML_FILES[@]}"
     yamllint -s -c "$this_dir/.yamllint" "${YAML_FILES[@]}"

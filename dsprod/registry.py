@@ -15,6 +15,14 @@ import os
 import pathlib
 import re
 import sys
+from typing import TYPE_CHECKING
+
+if (
+    TYPE_CHECKING
+):  # the interface lives in `processes.base`, which must not be imported at
+    # runtime from here: the plugins it defines import this registry, and the annotations below
+    # only ever need the name for a linter or a type checker.
+    from .processes.base import ProcessCustomization
 
 # Note: loading happens lazily (not at module import time), because every plugin imports
 # `register_process` back from this module.

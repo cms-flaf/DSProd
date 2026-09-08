@@ -68,6 +68,16 @@ jobs:
           done
           black --check --diff "${FILES[@]}"
 
+      - name: Install flake8
+        if: ${{ steps.changed_files.outputs.hasPythonFiles == 'true' }}
+        run: pip install flake8
+
+      # Whole-package, not just the changed files: an import dropped in one file only shows up
+      # where the name is used, which may be a file the branch never touched.
+      - name: Check for undefined names
+        if: ${{ steps.changed_files.outputs.hasPythonFiles == 'true' }}
+        run: flake8 --select=F821,F811 dsprod test
+
       - name: Install yamllint
         if: ${{ steps.changed_files.outputs.hasYamlFiles == 'true' }}
         run: pip install yamllint

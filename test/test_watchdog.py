@@ -129,6 +129,23 @@ class NoVerdictIsIssued(unittest.TestCase):
         w = watchdog([], listing_fails=True)
         self.assertEqual(verdicts(w, jobs((1, 7)), status(1)), {})
 
+    def test_an_unreadable_directory_is_reported_once_not_every_interval(self):
+        """It does not exist until the first job writes a flag, so the raw CLI error would be
+        printed on every interval of every wave and bury the case worth noticing."""
+        w = watchdog([], listing_fails=True)
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=None):
+            w.refresh()
+            w.refresh()
+        self.assertEqual(
+            len([m for m in w.messages if "cannot list" in m]), 1, w.messages
+        )
+
+    def test_becoming_readable_again_is_reported(self):
+        w = watchdog([], listing_fails=True)
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=[Flag(7, 1)]):
+            w.refresh()
+        self.assertTrue(any("readable again" in m for m in w.messages), w.messages)
+
     def test_when_most_running_jobs_look_stale(self):
         """Writing to the storage can break while reading it still works, and then every flag
         goes stale at once while every job is perfectly healthy."""
@@ -171,6 +188,65 @@ class NoVerdictIsIssued(unittest.TestCase):
         self.assertEqual(verdicts(w, jobs((1, 7)), status(1)), {})
 
 
+class AFlagThatDisappears(unittest.TestCase):
+    """Found by the first dry-run wave, which issued two `no heartbeat` verdicts against a job
+    that had just finished successfully: the heartbeat context removes the flag on the way out,
+    and CRAB keeps reporting the job as running for minutes afterwards. Armed, that would have
+    resubmitted a branch whose product had just been written."""
+
+    def setUp(self):
+        self.w = watchdog([Flag(7, age_minutes=0)])
+        prime(self.w, jobs((1, 7)))
+        # the driver has seen the flag at least once
+        self.assertEqual(self.w.verdicts(status(1), now=NOW), {})
+
+    def _relist(self, flags):
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=flags):
+            self.w.refresh()
+
+    def test_a_job_that_had_a_flag_and_lost_it_is_not_condemned(self):
+        self._relist([])
+        self.assertEqual(self.w.verdicts(status(1), now=NOW), {})
+        self.assertTrue(
+            any("exiting or restarting" in m for m in self.w.messages), self.w.messages
+        )
+
+    def test_a_job_that_never_had_one_still_is(self):
+        """The other half: nothing to distinguish it from a job that never started its payload."""
+        w = watchdog([])
+        self.assertEqual(len(verdicts(w, jobs((2, 9)), status(2))), 1)
+
+    def test_a_worker_that_dies_without_exiting_leaves_its_flag_and_is_caught(self):
+        """The shape of the real incident: the process stops, the flag stays and goes stale."""
+        self._relist([Flag(7, age_minutes=99)])
+        out = self.w.verdicts(status(1), now=NOW)
+        self.assertEqual(len(out), 1)
+        self.assertIn("99 min old", list(out.values())[0])
+
+
+class WhatGetsSaidOnceOnly(unittest.TestCase):
+    """The poll loop revisits the same jobs every interval, so anything published from inside it
+    repeats until the job leaves. The first wave printed the same dry-run verdict 14 times.
+    """
+
+    def test_a_dry_run_verdict_is_published_once_per_job(self):
+        w = watchdog([Flag(7, age_minutes=99)], cfg={"dry_run": True})
+        prime(w, jobs((1, 7)))
+        for _ in range(5):
+            w.verdicts(status(1), now=NOW)
+        self.assertEqual(len([m for m in w.messages if "dry run" in m]), 1, w.messages)
+
+    def test_the_per_branch_cap_is_explained_once(self):
+        w = watchdog([Flag(7, age_minutes=99)])
+        prime(w, jobs((1, 7)))
+        w.verdicts(status(1), now=NOW)  # spends the branch's one rescue
+        for _ in range(4):
+            w.verdicts(status(1), now=NOW)
+        self.assertEqual(
+            len([m for m in w.messages if "stalled 2 times" in m]), 1, w.messages
+        )
+
+
 class TheSettings(unittest.TestCase):
     def test_it_is_on_by_default(self):
         self.assertTrue(watchdog_config({})["enabled"])
@@ -195,6 +271,71 @@ class TheSettings(unittest.TestCase):
             text = f.read()
         for key in DEFAULTS:
             self.assertIn(key, text, f"{key} is not mentioned in config/global.yaml")
+
+
+class TheJobSideContext(unittest.TestCase):
+    """`crab_heartbeat()` is reached only inside a real CRAB job, so every test that does not set
+    LAW_CRAB_JOB_NUMBER takes its nullcontext early return -- which is how a NameError in the one
+    branch that constructs the Heartbeat survived 187 passing tests and was found by the first
+    real job instead."""
+
+    def heartbeat(self, env=None, cfg=None, is_branch=True):
+        from dsprod.crab import CrabWorkflow
+
+        task = mock.Mock()
+        task._crab_cfg = lambda: {"watchdog": cfg if cfg is not None else {}}
+        task.is_branch = lambda: is_branch
+        task.branch = 0
+        task.task_family = "RunProd"
+        task.heartbeat_target = lambda b: mock.Mock(uri=lambda: f"root://x//flags/{b}")
+        with mock.patch.dict(os.environ, env or {}, clear=False):
+            if env is None:
+                os.environ.pop("LAW_CRAB_JOB_NUMBER", None)
+            return CrabWorkflow.crab_heartbeat(task)
+
+    def test_a_crab_job_gets_a_real_heartbeat(self):
+        from dsprod.watchdog import Heartbeat
+
+        hb = self.heartbeat(env={"LAW_CRAB_JOB_NUMBER": "1"})
+        self.assertIsInstance(hb, Heartbeat)
+        self.assertEqual(hb.uri, "root://x//flags/0")
+        self.assertEqual(hb.interval, 30 * 60)
+
+    def test_the_interval_comes_from_the_configuration(self):
+        hb = self.heartbeat(
+            env={"LAW_CRAB_JOB_NUMBER": "1"}, cfg={"interval_minutes": 5}
+        )
+        self.assertEqual(hb.interval, 5 * 60)
+
+    def test_anything_that_is_not_a_crab_job_writes_nothing(self):
+        import contextlib
+
+        for kwargs in (
+            {},  # no LAW_CRAB_JOB_NUMBER: local or htcondor
+            {"env": {"LAW_CRAB_JOB_NUMBER": "1"}, "cfg": False},  # switched off
+            {
+                "env": {"LAW_CRAB_JOB_NUMBER": "1"},
+                "is_branch": False,
+            },  # the workflow itself
+        ):
+            hb = self.heartbeat(**kwargs)
+            self.assertIsInstance(hb, contextlib.nullcontext, kwargs)
+
+    def test_the_context_can_be_entered_and_left(self):
+        """Exercises the thread start/stop and the flag removal, with the storage stubbed."""
+        hb = self.heartbeat(
+            env={"LAW_CRAB_JOB_NUMBER": "1"}, cfg={"interval_minutes": 60}
+        )
+        with mock.patch("dsprod.watchdog.gfal_copy") as copy, mock.patch(
+            "dsprod.watchdog.gfal_rm"
+        ) as rm:
+            with hb:
+                pass
+        self.assertGreaterEqual(copy.call_count, 1, "no beat was written")
+        self.assertTrue(
+            copy.call_args.kwargs.get("force"), "the beat must overwrite in place"
+        )
+        rm.assert_called_once()
 
 
 class WhereTheFlagsLive(unittest.TestCase):
