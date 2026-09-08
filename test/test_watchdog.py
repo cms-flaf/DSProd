@@ -214,6 +214,71 @@ class TheSettings(unittest.TestCase):
             self.assertIn(key, text, f"{key} is not mentioned in config/global.yaml")
 
 
+class TheJobSideContext(unittest.TestCase):
+    """`crab_heartbeat()` is reached only inside a real CRAB job, so every test that does not set
+    LAW_CRAB_JOB_NUMBER takes its nullcontext early return -- which is how a NameError in the one
+    branch that constructs the Heartbeat survived 187 passing tests and was found by the first
+    real job instead."""
+
+    def heartbeat(self, env=None, cfg=None, is_branch=True):
+        from dsprod.crab import CrabWorkflow
+
+        task = mock.Mock()
+        task._crab_cfg = lambda: {"watchdog": cfg if cfg is not None else {}}
+        task.is_branch = lambda: is_branch
+        task.branch = 0
+        task.task_family = "RunProd"
+        task.heartbeat_target = lambda b: mock.Mock(uri=lambda: f"root://x//flags/{b}")
+        with mock.patch.dict(os.environ, env or {}, clear=False):
+            if env is None:
+                os.environ.pop("LAW_CRAB_JOB_NUMBER", None)
+            return CrabWorkflow.crab_heartbeat(task)
+
+    def test_a_crab_job_gets_a_real_heartbeat(self):
+        from dsprod.watchdog import Heartbeat
+
+        hb = self.heartbeat(env={"LAW_CRAB_JOB_NUMBER": "1"})
+        self.assertIsInstance(hb, Heartbeat)
+        self.assertEqual(hb.uri, "root://x//flags/0")
+        self.assertEqual(hb.interval, 30 * 60)
+
+    def test_the_interval_comes_from_the_configuration(self):
+        hb = self.heartbeat(
+            env={"LAW_CRAB_JOB_NUMBER": "1"}, cfg={"interval_minutes": 5}
+        )
+        self.assertEqual(hb.interval, 5 * 60)
+
+    def test_anything_that_is_not_a_crab_job_writes_nothing(self):
+        import contextlib
+
+        for kwargs in (
+            {},  # no LAW_CRAB_JOB_NUMBER: local or htcondor
+            {"env": {"LAW_CRAB_JOB_NUMBER": "1"}, "cfg": False},  # switched off
+            {
+                "env": {"LAW_CRAB_JOB_NUMBER": "1"},
+                "is_branch": False,
+            },  # the workflow itself
+        ):
+            hb = self.heartbeat(**kwargs)
+            self.assertIsInstance(hb, contextlib.nullcontext, kwargs)
+
+    def test_the_context_can_be_entered_and_left(self):
+        """Exercises the thread start/stop and the flag removal, with the storage stubbed."""
+        hb = self.heartbeat(
+            env={"LAW_CRAB_JOB_NUMBER": "1"}, cfg={"interval_minutes": 60}
+        )
+        with mock.patch("dsprod.watchdog.gfal_copy") as copy, mock.patch(
+            "dsprod.watchdog.gfal_rm"
+        ) as rm:
+            with hb:
+                pass
+        self.assertGreaterEqual(copy.call_count, 1, "no beat was written")
+        self.assertTrue(
+            copy.call_args.kwargs.get("force"), "the beat must overwrite in place"
+        )
+        rm.assert_called_once()
+
+
 class WhereTheFlagsLive(unittest.TestCase):
     """`fs_watchdog` is a separate endpoint so the heartbeat load, and the heartbeat's own
     availability, are independent of the storage the products go to."""

@@ -42,7 +42,7 @@ from .tools import (
     timed_call_wrapper,
     update_kerberos_ticket,
 )
-from .watchdog import HEARTBEAT_DIR, Heartbeat, with_heartbeat
+from .watchdog import HEARTBEAT_DIR, with_heartbeat
 
 law.contrib.load("htcondor")
 

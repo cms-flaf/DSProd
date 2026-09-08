@@ -46,7 +46,7 @@ from .tools import (
     timed_call_wrapper,
     update_kerberos_ticket,
 )
-from .watchdog import StallWatchdog, watchdog_config
+from .watchdog import Heartbeat, StallWatchdog, watchdog_config
 
 law.contrib.load("cms")
 
