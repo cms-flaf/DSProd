@@ -84,7 +84,15 @@ def create_tmp_local_file():
 
 
 def gfal_env(voms_token):
-    return {"X509_USER_PROXY": voms_token, "GFAL_PYTHONBIN": "/usr/bin/python3"}
+    # TZ=UTC because `gfal-ls --time-style long-iso` prints timestamps in the CLIENT's timezone:
+    # without it the watchdog would be comparing a storage mtime rendered in whatever the driver
+    # host happens to be set to against its own clock, and a DST change would silently move the
+    # staleness threshold by an hour.
+    return {
+        "X509_USER_PROXY": voms_token,
+        "GFAL_PYTHONBIN": "/usr/bin/python3",
+        "TZ": "UTC",
+    }
 
 
 def gfal_copy(
@@ -93,8 +101,16 @@ def gfal_copy(
     voms_token=None,
     number_of_streams=2,
     timeout=7200,
+    force=False,
     verbose=1,
 ):
+    """Copy `input_file` to `output_file`.
+
+    Without `force` an existing destination is left alone -- `gfal-copy` does not overwrite, which
+    is why `gfal_copy_safe` clears the destination itself. `force` is for the one case that wants
+    an in-place overwrite and must not have a window where the file is absent: the watchdog
+    heartbeat, whose whole signal is the destination's modification time advancing.
+    """
     voms_token = get_voms_proxy_token(voms_token)
     try:
         catch_output = verbose == 0
@@ -107,6 +123,8 @@ def gfal_copy(
             "--timeout",
             str(timeout),
         ]
+        if force:
+            cmd.append("--force")
         if verbose > 1:
             n_v = min(3, verbose - 1)
             cmd.append("-" + "v" * n_v)

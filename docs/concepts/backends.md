@@ -302,6 +302,53 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     job carrying `dummy_job_id` and being retried with `error: unknown job id`. DSProd now checks
     the sandbox before submitting and reports that case directly.
 
+### Stalled jobs (the watchdog)
+
+CRAB reports a job as `running` for as long as the batch system says its slot is held, which is not
+the same as the payload still doing anything. A 600-branch production ended with two jobs whose
+whole status record — wall duration, memory, CPU time — was identical across eight consecutive
+polls: they had started promptly, run for ~2.7 h, then stopped reporting, and nothing would have
+reclaimed them until CRAB's 24 h wall-clock rule fired 21 hours later. 598 of 600 branches were
+done and the production simply waited.
+
+So each running CRAB job refreshes a flag file in **one flat directory** on `fs_default`
+(`<output>/heartbeat/<task>_<run>/<branch>`), and the driver lists that directory once per interval
+— one remote call however many jobs are in flight, about 1.6 s at 3000 entries. A job whose flag
+has not moved for `missed_checks` intervals is rewritten as **failed** on that poll, which puts it
+through law's ordinary retry path: the attempt is counted and the branches go back to the wave gate
+like any other failure. There is no separate resubmission mechanism.
+
+```yaml
+crab:
+  watchdog: false          # switch it off entirely
+  # or tune it:
+  watchdog:
+    interval_minutes: 30   # refresh/check period
+    missed_checks: 2       # -> declared dead after 60 min of silence
+```
+
+The watchdog is **CRAB-only**: the failure is a batch system holding a slot it cannot account for,
+and a `local` run has no slot to hold. Jobs detect this themselves — the heartbeat is written only
+when law's CRAB wrapper is what launched the job — so an HTCondor or local run writes no flags and
+the driver watches nothing.
+
+!!! note "It abandons the job, it does not kill it"
+    `crab kill` has no per-job form, and law's `cancel` ignores the ids it is given and kills the
+    whole task — so condemning one job would take every healthy sibling with it. The branch is
+    resubmitted immediately and the stalled slot is left to CRAB's wall-clock limit.
+
+!!! warning "Refusing to act is the safe direction, and it does refuse"
+    Every verdict spends one of a branch's four attempts, and ~30 exhausted branches of a 600-job
+    run end the whole workflow — so a watchdog that condemns healthy jobs is far worse than one
+    that misses a stall. It issues nothing when the listing cannot be read (no listing is no
+    evidence, and an outage must not accumulate staleness); nothing for a job too young to have
+    written its first flag; nothing beyond `max_per_interval` (5) in one pass; and nothing at all
+    when more than `max_stale_fraction` (0.5) of running jobs look stale, because writing to the
+    storage can break while reading it still works, and then every flag goes stale while every job
+    is healthy. A branch is rescued at most `max_per_branch` (1) times: one that stalls wherever it
+    runs is the branch's problem, not the slot's. `dry_run: true` logs the verdicts it would issue
+    and issues none.
+
 ### Debugging CRAB jobs
 
 `crab status`/`crab getlog` re-delegate a MyProxy interactively when run without `--proxy`

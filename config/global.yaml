@@ -38,6 +38,18 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #     quarantine_hours: 6           how long it stays out; afterwards its record starts clean
 #     window_hours: 24              outcomes older than this stop counting
 #     max_sites: 10                 never quarantine more than this many sites at once
+#   watchdog:                       fail a job whose slot is held but whose payload has stopped.
+#     enabled: true                 CRAB only -- `watchdog: false` switches it off entirely
+#     interval_minutes: 30          how often a job refreshes its flag, and the driver lists them
+#     missed_checks: 2              refreshes a job may miss before it is declared failed
+#                                   (so the default declares a job dead after 60 min of silence)
+#     max_per_interval: 5           brake: never fail more than this many jobs in one interval
+#     max_per_branch: 1             how often one branch may be rescued this way; a branch that
+#                                   stalls wherever it runs is the branch's problem, and every
+#                                   verdict spends one of its four attempts
+#     max_stale_fraction: 0.5       above this share of running jobs looking stale, read it as a
+#                                   storage fault and issue nothing
+#     dry_run: false                log the verdicts it would issue, issue none
 crab:
   max_memory_mb: 2500
   # Ceiling on the cores a CRAB job may request. It caps each task's own `n_cpus`, so a value

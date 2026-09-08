@@ -88,6 +88,21 @@ exactly these paths; CRAB's own stageout is disabled (see [Backends](backends.md
     check can never overwrite a production sample. Gridpacks are the exception — they do not depend
     on the number of events, so they stay in the production area and a test reuses them.
 
+### How a product becomes visible
+
+Every remote write publishes by **rename**: the file is uploaded to a
+`<name>.dsprod-tmp-<pid>-<random>` sibling, its adler32 is verified against the source, and only
+then is it renamed onto its final name — which on this storage is atomic. So a product's real name
+never exists while its content is partial, and a job that dies mid-upload leaves the previous
+version untouched (or nothing at all, for a first write) plus one orphan `.dsprod-tmp-*` file.
+
+That matters most for the two writes that cannot be recovered if they are half-published: the
+merged nano, whose 50 staged inputs are deleted immediately afterwards, and the `produced/` record
+that is the production's completeness signal. The tmp marker is appended **after** the file's own
+extension, so nothing that globs `*.root` can pick one up, and the suffix is unique per writer —
+two jobs publishing the same target (a resubmission racing the job it replaced) must not share a
+tmp path.
+
 ### Local bookkeeping
 
 Everything that is not a product stays in the checkout, under `$ANALYSIS_DATA_PATH` (`data/`):

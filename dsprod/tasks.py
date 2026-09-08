@@ -42,6 +42,7 @@ from .tools import (
     timed_call_wrapper,
     update_kerberos_ticket,
 )
+from .watchdog import HEARTBEAT_DIR, Heartbeat, with_heartbeat
 
 law.contrib.load("htcondor")
 
@@ -411,6 +412,22 @@ class Task(law.Task):
         """Path of a product relative to `fs_default`: <storage name>/<parts...>."""
         return os.path.join(self.storage_name(), *parts)
 
+    def heartbeat_dir_path(self):
+        """The one flat directory holding a flag per live job of this run, on `fs_default`.
+
+        Flat and per-run: the driver lists it once per interval whatever the job count, and a
+        differently-narrowed run gets its own directory because it renumbers its branches.
+        """
+        cls, name = self.store_parts()
+        return self.storage_path(HEARTBEAT_DIR, f"{cls}_{name}")
+
+    def heartbeat_dir_uri(self):
+        return self.remote_target(self.heartbeat_dir_path()).uri()
+
+    def heartbeat_target(self, branch):
+        """This branch's flag. Named by branch alone -- the driver maps it back through job_data."""
+        return self.remote_target(self.heartbeat_dir_path(), str(branch))
+
     def staged_nano_target(self, era, point, version, seed):
         """The per-seed nano file `RunProd` stages for `NanoMergeTask` to consume.
 
@@ -672,6 +689,7 @@ class MakeGridpack(GridpackTask, HTCondorWorkflow, CrabWorkflow, law.LocalWorkfl
             "store": ImportGridpack.req(self, branch=self.branch, workflow="local"),
         }
 
+    @with_heartbeat
     def run(self):
         # Generating on the grid is fine -- that is what submitting MakeGridpack does. What must
         # not happen is a *production* job quietly building its own gridpack after finding it
@@ -1007,6 +1025,7 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
             for v in self.era_nano_versions(era)
         }
 
+    @with_heartbeat
     def run(self):
         # `NanoMergeTask` requires only the seeds of the groups it merges, so a merge job whose
         # seed is not produced yet would run this 7 h chain inside a 3 h merge slot, on the
@@ -1183,6 +1202,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                 "the odd seeds at the setup's size, or delete their `produced/` records."
             )
 
+    @with_heartbeat
     def run(self):
         era, pi, version, _, seeds = self.branch_data
         vparams = run_step.resolve_step_params(
