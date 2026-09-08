@@ -129,6 +129,23 @@ class NoVerdictIsIssued(unittest.TestCase):
         w = watchdog([], listing_fails=True)
         self.assertEqual(verdicts(w, jobs((1, 7)), status(1)), {})
 
+    def test_an_unreadable_directory_is_reported_once_not_every_interval(self):
+        """It does not exist until the first job writes a flag, so the raw CLI error would be
+        printed on every interval of every wave and bury the case worth noticing."""
+        w = watchdog([], listing_fails=True)
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=None):
+            w.refresh()
+            w.refresh()
+        self.assertEqual(
+            len([m for m in w.messages if "cannot list" in m]), 1, w.messages
+        )
+
+    def test_becoming_readable_again_is_reported(self):
+        w = watchdog([], listing_fails=True)
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=[Flag(7, 1)]):
+            w.refresh()
+        self.assertTrue(any("readable again" in m for m in w.messages), w.messages)
+
     def test_when_most_running_jobs_look_stale(self):
         """Writing to the storage can break while reading it still works, and then every flag
         goes stale at once while every job is perfectly healthy."""

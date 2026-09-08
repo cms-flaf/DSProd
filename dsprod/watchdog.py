@@ -182,6 +182,7 @@ class StallWatchdog:
         self._per_branch = {}  # branch -> verdicts issued so far
         self._by_id = {}  # (crab_num, task_name) -> (job_num, branches)
         self._issued_this_interval = 0
+        self._listing_failures = 0
 
     @property
     def flag_dir(self):
@@ -205,15 +206,33 @@ class StallWatchdog:
         """List the flag directory once. Returns False if the listing could not be read."""
         if not self.enabled:
             return False
-        entries = gfal_ls_safe(self.flag_dir, voms_token=self.voms_token, verbose=0)
+        # catch_stderr: until a job writes its first flag the directory does not exist, so the
+        # CLI's own "404 File not found" would be printed on every interval of every wave. The
+        # outcome is reported here instead, once per transition, so a listing that starts failing
+        # after it had been working -- the case worth noticing -- is not lost in that noise.
+        entries = gfal_ls_safe(
+            self.flag_dir, voms_token=self.voms_token, catch_stderr=True, verbose=0
+        )
         with self._lock:
             self._issued_this_interval = 0
             if entries is None:
                 # Could be an outage, could be a directory no job has written to yet. Either way
                 # there is no evidence, and stale evidence must not accumulate across it.
+                self._listing_failures += 1
+                if self._listing_failures == 1:
+                    self.publish(
+                        f"watchdog: cannot list {self.flag_dir} -- no verdicts until it can be "
+                        "read (expected until the first job writes a flag)"
+                    )
                 self._ages = None
                 self._listed = False
                 return False
+            if self._listing_failures:
+                self.publish(
+                    f"watchdog: {self.flag_dir} readable again after "
+                    f"{self._listing_failures} failed listing(s)"
+                )
+                self._listing_failures = 0
             self._ages = {
                 e.name: e.date for e in entries if e.date is not None and not e.is_dir
             }
