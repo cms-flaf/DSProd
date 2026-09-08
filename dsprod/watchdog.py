@@ -181,6 +181,10 @@ class StallWatchdog:
         self._first_running = {}  # (job_num, job_id) -> when we first saw it running
         self._per_branch = {}  # branch -> verdicts issued so far
         self._by_id = {}  # (crab_num, task_name) -> (job_num, branches)
+        self._seen_flag = set()  # job ids a flag has ever been observed for
+        self._reported = (
+            set()
+        )  # messages already published, so a poll loop cannot repeat them
         self._issued_this_interval = 0
         self._listing_failures = 0
 
@@ -304,11 +308,24 @@ class StallWatchdog:
                 # a job that has not had time to write its first flag is not evidence of anything
                 since_seen = (now - self._first_running[key]).total_seconds()
                 grace = self.stale_seconds + self.interval_seconds
-                if age is None:
-                    if since_seen >= grace:
-                        stale.append((job_id, job_num, branches, None))
-                elif age >= self.stale_seconds:
-                    stale.append((job_id, job_num, branches, age))
+                if age is not None:
+                    self._seen_flag.add(key)
+                    if age >= self.stale_seconds:
+                        stale.append((job_id, job_num, branches, age))
+                elif key in self._seen_flag:
+                    # The flag was there and is gone, which is exactly what a job does on its way
+                    # out: the heartbeat context removes it, and CRAB goes on reporting the job as
+                    # running for minutes afterwards. Failing it here would resubmit a branch that
+                    # had just been produced -- observed in the first dry-run wave. A worker that
+                    # dies without exiting cleanly leaves its flag behind instead, and that is
+                    # caught above as a stale one, which is the shape the real incident had.
+                    self._note(
+                        ("gone", key),
+                        f"watchdog: job {job_num} had a heartbeat and no longer does -- reading "
+                        "that as exiting or restarting, not stalled",
+                    )
+                elif since_seen >= grace:
+                    stale.append((job_id, job_num, branches, None))
             if not stale:
                 return {}
             # writing to the storage can break while reading it still works, and then every flag
@@ -333,10 +350,11 @@ class StallWatchdog:
                     break
                 repeat = max(self._per_branch.get(b, 0) for b in branches)
                 if repeat >= int(self.cfg["max_per_branch"]):
-                    self.publish(
+                    self._note(
+                        ("cap", tuple(branches)),
                         f"watchdog: branch(es) {list(branches)} have stalled {repeat + 1} times "
                         "now -- that is the branch, not the slot, so it is left to CRAB's "
-                        "wall-clock limit instead of spending another attempt"
+                        "wall-clock limit instead of spending another attempt",
                     )
                     continue
                 seen = (
@@ -349,8 +367,10 @@ class StallWatchdog:
                     f"({self.cfg['missed_checks']} x {self.cfg['interval_minutes']} min)"
                 )
                 if self.cfg.get("dry_run"):
-                    self.publish(
-                        f"watchdog (dry run): would fail job {job_num} -- {reason}"
+                    # once per job, not once per poll: a dry run exists to be read
+                    self._note(
+                        ("dry", key),
+                        f"watchdog (dry run): would fail job {job_num} -- {reason}",
                     )
                     continue
                 for b in branches:
@@ -359,7 +379,17 @@ class StallWatchdog:
                 out[job_id] = reason
             return out
 
+    def _note(self, key, message):
+        """Publish `message` the first time `key` produces it, and never again."""
+        if key in self._reported:
+            return
+        self._reported.add(key)
+        self.publish(message)
+
     def forget(self, job_id):
         """Drop the grace clock of a job id law has replaced, so a resubmission starts clean."""
         with self._lock:
-            self._first_running.pop(self._key(job_id), None)
+            key = self._key(job_id)
+            self._first_running.pop(key, None)
+            self._seen_flag.discard(key)
+            self._reported -= {("gone", key), ("dry", key)}

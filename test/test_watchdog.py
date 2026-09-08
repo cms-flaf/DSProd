@@ -188,6 +188,65 @@ class NoVerdictIsIssued(unittest.TestCase):
         self.assertEqual(verdicts(w, jobs((1, 7)), status(1)), {})
 
 
+class AFlagThatDisappears(unittest.TestCase):
+    """Found by the first dry-run wave, which issued two `no heartbeat` verdicts against a job
+    that had just finished successfully: the heartbeat context removes the flag on the way out,
+    and CRAB keeps reporting the job as running for minutes afterwards. Armed, that would have
+    resubmitted a branch whose product had just been written."""
+
+    def setUp(self):
+        self.w = watchdog([Flag(7, age_minutes=0)])
+        prime(self.w, jobs((1, 7)))
+        # the driver has seen the flag at least once
+        self.assertEqual(self.w.verdicts(status(1), now=NOW), {})
+
+    def _relist(self, flags):
+        with mock.patch("dsprod.watchdog.gfal_ls_safe", return_value=flags):
+            self.w.refresh()
+
+    def test_a_job_that_had_a_flag_and_lost_it_is_not_condemned(self):
+        self._relist([])
+        self.assertEqual(self.w.verdicts(status(1), now=NOW), {})
+        self.assertTrue(
+            any("exiting or restarting" in m for m in self.w.messages), self.w.messages
+        )
+
+    def test_a_job_that_never_had_one_still_is(self):
+        """The other half: nothing to distinguish it from a job that never started its payload."""
+        w = watchdog([])
+        self.assertEqual(len(verdicts(w, jobs((2, 9)), status(2))), 1)
+
+    def test_a_worker_that_dies_without_exiting_leaves_its_flag_and_is_caught(self):
+        """The shape of the real incident: the process stops, the flag stays and goes stale."""
+        self._relist([Flag(7, age_minutes=99)])
+        out = self.w.verdicts(status(1), now=NOW)
+        self.assertEqual(len(out), 1)
+        self.assertIn("99 min old", list(out.values())[0])
+
+
+class WhatGetsSaidOnceOnly(unittest.TestCase):
+    """The poll loop revisits the same jobs every interval, so anything published from inside it
+    repeats until the job leaves. The first wave printed the same dry-run verdict 14 times.
+    """
+
+    def test_a_dry_run_verdict_is_published_once_per_job(self):
+        w = watchdog([Flag(7, age_minutes=99)], cfg={"dry_run": True})
+        prime(w, jobs((1, 7)))
+        for _ in range(5):
+            w.verdicts(status(1), now=NOW)
+        self.assertEqual(len([m for m in w.messages if "dry run" in m]), 1, w.messages)
+
+    def test_the_per_branch_cap_is_explained_once(self):
+        w = watchdog([Flag(7, age_minutes=99)])
+        prime(w, jobs((1, 7)))
+        w.verdicts(status(1), now=NOW)  # spends the branch's one rescue
+        for _ in range(4):
+            w.verdicts(status(1), now=NOW)
+        self.assertEqual(
+            len([m for m in w.messages if "stalled 2 times" in m]), 1, w.messages
+        )
+
+
 class TheSettings(unittest.TestCase):
     def test_it_is_on_by_default(self):
         self.assertTrue(watchdog_config({})["enabled"])

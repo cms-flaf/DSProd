@@ -356,6 +356,12 @@ the driver watches nothing.
     runs is the branch's problem, not the slot's. `dry_run: true` logs the verdicts it would issue
     and issues none.
 
+    A flag that **was** there and is gone also produces no verdict: removing it is what a job does
+    on its way out, and CRAB keeps reporting the job as running for minutes afterwards, so failing
+    it then would resubmit a branch that had just been written. A worker that dies without exiting
+    cleanly leaves its flag behind instead, and that is caught as a stale one — which is the shape
+    the incident this exists for actually had.
+
 ### Debugging CRAB jobs
 
 `crab status`/`crab getlog` re-delegate a MyProxy interactively when run without `--proxy`
