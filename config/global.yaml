@@ -14,6 +14,12 @@
 # DNS), while xrootd reads and writes both work. Same choice as FLAF's fs_anaCacheTuple.
 fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 
+# `fs_watchdog` (optional) holds the watchdog's heartbeat flags; unset = `fs_default`. Worth
+# pointing elsewhere: the flags are one small overwrite per job per interval on a single flat
+# directory, a metadata load quite unlike the products' few large writes, and a heartbeat says
+# most about a job when the endpoint it is written to is not the one the products go to. e.g.
+#   fs_watchdog: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd_watchdog/
+
 # CRAB backend: compute settings only. CRAB never stages out (DSProd owns all I/O), so there is
 # no CRAB output location to configure.
 #
@@ -38,6 +44,18 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #     quarantine_hours: 6           how long it stays out; afterwards its record starts clean
 #     window_hours: 24              outcomes older than this stop counting
 #     max_sites: 10                 never quarantine more than this many sites at once
+#   watchdog:                       fail a job whose slot is held but whose payload has stopped.
+#     enabled: true                 CRAB only -- `watchdog: false` switches it off entirely
+#     interval_minutes: 30          how often a job refreshes its flag, and the driver lists them
+#     missed_checks: 2              refreshes a job may miss before it is declared failed
+#                                   (so the default declares a job dead after 60 min of silence)
+#     max_per_interval: 5           brake: never fail more than this many jobs in one interval
+#     max_per_branch: 1             how often one branch may be rescued this way; a branch that
+#                                   stalls wherever it runs is the branch's problem, and every
+#                                   verdict spends one of its four attempts
+#     max_stale_fraction: 0.5       above this share of running jobs looking stale, read it as a
+#                                   storage fault and issue nothing
+#     dry_run: false                log the verdicts it would issue, issue none
 crab:
   # Ceiling on the cores a CRAB job may request. CRAB accepts only 1, 2, 4 or 8 cores, and sells
   # at most 2500 MB per core -- 3000 MB for a single-core job. This caps both a task's own

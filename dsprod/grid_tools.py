@@ -9,6 +9,7 @@ where the gfal2 python bindings are not available for the job's python.
 import datetime
 import os
 import re
+import uuid
 
 from .tools import (
     ps_call,
@@ -18,6 +19,24 @@ from .tools import (
 )
 
 COPY_TMP_SUFFIX = ".tmp"
+
+#: marker for a `copy_rename` upload in progress. Unique per writer, because two jobs publishing
+#: the same target -- a watchdog resubmission racing the job it gave up on, or a speculative
+#: duplicate -- would otherwise share one tmp path and delete each other's upload. It is appended
+#: AFTER the target's own extension so nothing that globs `*.root` can pick it up.
+COPY_RENAME_TMP_PREFIX = ".dsprod-tmp-"
+
+
+def copy_rename_tmp_suffix():
+    """A fresh, writer-unique suffix for a `copy_rename` upload."""
+    return f"{COPY_RENAME_TMP_PREFIX}{os.getpid()}-{uuid.uuid4().hex[:12]}"
+
+
+def is_copy_rename_tmp(name):
+    """Whether `name` is an in-progress or orphaned `copy_rename` upload."""
+    return COPY_RENAME_TMP_PREFIX in os.path.basename(name)
+
+
 COPY_TMP_LOCAL_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".gfal_copy_safe_tmp"
 )
@@ -65,7 +84,15 @@ def create_tmp_local_file():
 
 
 def gfal_env(voms_token):
-    return {"X509_USER_PROXY": voms_token, "GFAL_PYTHONBIN": "/usr/bin/python3"}
+    # TZ=UTC because `gfal-ls --time-style long-iso` prints timestamps in the CLIENT's timezone:
+    # without it the watchdog would be comparing a storage mtime rendered in whatever the driver
+    # host happens to be set to against its own clock, and a DST change would silently move the
+    # staleness threshold by an hour.
+    return {
+        "X509_USER_PROXY": voms_token,
+        "GFAL_PYTHONBIN": "/usr/bin/python3",
+        "TZ": "UTC",
+    }
 
 
 def gfal_copy(
@@ -74,8 +101,16 @@ def gfal_copy(
     voms_token=None,
     number_of_streams=2,
     timeout=7200,
+    force=False,
     verbose=1,
 ):
+    """Copy `input_file` to `output_file`.
+
+    Without `force` an existing destination is left alone -- `gfal-copy` does not overwrite, which
+    is why `gfal_copy_safe` clears the destination itself. `force` is for the one case that wants
+    an in-place overwrite and must not have a window where the file is absent: the watchdog
+    heartbeat, whose whole signal is the destination's modification time advancing.
+    """
     voms_token = get_voms_proxy_token(voms_token)
     try:
         catch_output = verbose == 0
@@ -88,6 +123,8 @@ def gfal_copy(
             "--timeout",
             str(timeout),
         ]
+        if force:
+            cmd.append("--force")
         if verbose > 1:
             n_v = min(3, verbose - 1)
             cmd.append("-" + "v" * n_v)
@@ -133,7 +170,10 @@ def gfal_copy_safe(
         raise RuntimeError(f'gfal_copy_safe: unknown copy mode "{copy_mode}".')
     if copy_mode == "copy_flag":
         tmp_local_file = create_tmp_local_file()
-    output_file_tmp = output_file + COPY_TMP_SUFFIX
+    if copy_mode == "copy_flag":
+        output_file_tmp = output_file + COPY_TMP_SUFFIX
+    else:
+        output_file_tmp = output_file + copy_rename_tmp_suffix()
     output_file_sum_target = (
         output_file if copy_mode == "copy_flag" else output_file_tmp
     )
@@ -143,7 +183,12 @@ def gfal_copy_safe(
         nonlocal attempt
         attempt += 1
         active_verbose = min(verbose + attempt if verbose > 0 else 0, 2)
-        if gfal_exists(output_file, voms_token=voms_token):
+        # `copy_flag` has to clear the destination because it copies onto it directly. In
+        # `copy_rename` mode the destination is only ever created by the rename below, so removing
+        # it first would do the one thing this mode exists to prevent: take a good published file
+        # away and leave nothing in its place for the whole duration of the copy. The rename
+        # replaces it atomically instead.
+        if copy_mode == "copy_flag" and gfal_exists(output_file, voms_token=voms_token):
             gfal_rm(output_file, voms_token=voms_token, recursive=False)
         if gfal_exists(output_file_tmp, voms_token=voms_token):
             gfal_rm(output_file_tmp, voms_token=voms_token, recursive=False)

@@ -22,6 +22,7 @@ backend. Only the compute knobs are configurable, in the merged global config
       # retry_release_minutes: 45  # a parked retry goes out after this long, whatever the wave
 """
 
+import contextlib
 import fnmatch
 import json
 import math
@@ -45,6 +46,7 @@ from .tools import (
     timed_call_wrapper,
     update_kerberos_ticket,
 )
+from .watchdog import StallWatchdog, watchdog_config
 
 law.contrib.load("cms")
 
@@ -286,6 +288,48 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
     #: in-flight counts of a project not queried for this long stop counting
     in_flight_stale_seconds = 3600.0
 
+    def _apply_watchdog(self, result):
+        """Turn a stalled job into a failed one, on this poll's fresh status.
+
+        Rewriting the status here rather than editing law's job data is what makes the standard
+        retry path do the work: law sees a failed job on this very iteration, counts the attempt,
+        and hands the branches back to the wave gate like any other failure. Nothing changes the
+        number of jobs law is polling, which its poll loop snapshots once.
+
+        `code` is left as None deliberately. `harvest_site_stats` skips a failure with no job-level
+        code -- "killed, or never started: not the site's doing" -- and a watchdog verdict is our
+        own action, so it must not enter the site record through the back door. The site is
+        recorded once per branch, explicitly, below.
+        """
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is None or not watchdog.enabled:
+            return
+        for job_id, reason in watchdog.verdicts(result).items():
+            data = result.get(job_id)
+            if not isinstance(data, dict) or data.get("status") != self.RUNNING:
+                # it finished in the seconds since the verdict was formed; resubmitting a branch
+                # that is already done is the worst false positive available here
+                continue
+            site = ((data.get("extra") or {}).get("site_history") or [None])[-1]
+            data["status"] = self.FAILED
+            data["code"] = None
+            data["error"] = reason
+            watchdog.forget(job_id)
+            msg = f"watchdog: failing job {job_id} -- {reason}"
+            if site:
+                msg += f" (last site {site})"
+            print(msg)
+            if site and getattr(self, "site_stats", None) is not None:
+                # first stall of this branch only: a branch that hangs wherever it lands is the
+                # branch's problem, and charging every one of its stalls to a different site is
+                # how a quarantine baseline gets poisoned
+                with self._stats_lock:
+                    key = (str(job_id), "watchdog")
+                    if key not in self._stats_seen:
+                        self._stats_seen.add(key)
+                        self.site_stats.record(site, False)
+                        self.site_stats.save()
+
     def harvest_site_stats(self, proj_dir, result):
         """Record what CRAB itself said about each job, per site.
 
@@ -360,6 +404,7 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
                     time.sleep(self.query_retry_delay)
                 continue
             self._unreadable.pop(proj_dir, None)
+            self._apply_watchdog(result)
             self.harvest_site_stats(proj_dir, result)
             return result
 
@@ -815,6 +860,12 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     #: rolling per-site job statistics, fed by the job manager (see harvest_site_stats)
     _site_stats_obj = None
 
+    #: stall watchdog, shared between the poll callback and the job manager (see job_watchdog)
+    _watchdog_obj = None
+
+    #: throttle for the watchdog's one directory listing per interval
+    _watchdog_refresh = None
+
     crab_memory = luigi.IntParameter(
         default=-1,
         significant=False,
@@ -944,7 +995,60 @@ class CrabWorkflow(law.cms.CrabWorkflow):
                 else (lambda: None)
             )
         self._crab_kerberos_update()
+
+        # one directory listing per interval, however many jobs are in flight. The verdicts
+        # themselves are applied in the job manager's query(), on the fresh status of each CRAB
+        # project, so nothing here changes the number of jobs law is polling.
+        watchdog = self.job_watchdog()
+        if watchdog.enabled and self._watchdog_refresh is None:
+            self._watchdog_refresh = timed_call_wrapper(
+                watchdog.refresh, watchdog.interval_seconds
+            )
+        if self._watchdog_refresh is not None:
+            proxy = getattr(self, "workflow_proxy", None)
+            job_data = getattr(proxy, "job_data", None)
+            if job_data is not None:
+                watchdog.set_jobs(getattr(job_data, "jobs", None))
+            self._watchdog_refresh()
         return True
+
+    def job_watchdog(self):
+        """The stall watchdog, built once per law process and shared with the job manager.
+
+        On for CRAB only, which is where the failure lives: a batch system reporting a slot as
+        held after its payload has stopped. `crab.watchdog: false` turns it off; see
+        `dsprod/watchdog.py` for what the settings mean.
+        """
+        if self._watchdog_obj is None:
+            self._watchdog_obj = StallWatchdog(
+                self.heartbeat_dir_uri,
+                watchdog_config(self._crab_cfg()),
+                voms_token=os.environ.get("X509_USER_PROXY") or None,
+                publish=self.publish_message,
+            )
+        return self._watchdog_obj
+
+    def crab_heartbeat(self):
+        """Job side: refresh this branch's flag while the payload runs.
+
+        A no-op unless this really is a CRAB job -- `LAW_CRAB_JOB_NUMBER` is set by law's CRAB
+        wrapper and by nothing else -- so a local or HTCondor run writes no flags, matching the
+        driver side, which only watches CRAB.
+        """
+        cfg = watchdog_config(self._crab_cfg())
+        if (
+            not cfg["enabled"]
+            or not self.is_branch()
+            or "LAW_CRAB_JOB_NUMBER" not in os.environ
+        ):
+            return contextlib.nullcontext()
+        return Heartbeat(
+            self.heartbeat_target(self.branch).uri(),
+            int(cfg["interval_minutes"]) * 60,
+            voms_token=os.environ.get("X509_USER_PROXY") or None,
+            label={"task": self.task_family, "branch": self.branch},
+            log=self.publish_message,
+        )
 
     def site_stats(self):
         """Rolling per-site job record, kept in the production area across runs."""
@@ -972,6 +1076,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         """
         manager = super().crab_create_job_manager(**kwargs)
         manager.site_stats = self.site_stats()
+        manager.watchdog = self.job_watchdog()
         try:
             manager.cmssw_env
         except Exception as exc:

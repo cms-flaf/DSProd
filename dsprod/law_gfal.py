@@ -185,7 +185,21 @@ class GFALFileInterface(RemoteFileInterface):
             for dst_uri in dst_uris:
                 dst_dir_uri, _ = os.path.split(dst_uri)
                 self.path_cache.set(dst_uri, False)
-                gfal_copy_safe(src_uri, dst_uri, voms_token=self.voms_token, verbose=0)
+                # `copy_rename`, not the default `copy_flag`: publish by renaming a completed,
+                # checksum-verified upload onto the target, so the target name never exists while
+                # its content is partial. Every write that reaches here builds a whole artefact
+                # locally and then publishes it -- there is no append and no reader that watches a
+                # product grow -- and two of them are unrecoverable if half-published: the merged
+                # nano (its 50 staged inputs are deleted straight after) and the `produced/`
+                # record that is the production's completeness signal. Costs one extra namespace
+                # round trip, ~1 s on this endpoint.
+                gfal_copy_safe(
+                    src_uri,
+                    dst_uri,
+                    voms_token=self.voms_token,
+                    copy_mode="copy_rename",
+                    verbose=0,
+                )
                 self.path_cache.set(dst_uri, True)
                 cached_dst_dir, _ = self.path_cache.get(dst_dir_uri)
                 if cached_dst_dir is not None and not cached_dst_dir:

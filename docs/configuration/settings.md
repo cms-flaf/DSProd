@@ -57,6 +57,10 @@ A production writes to `<fs_default>/<output>`, where `output` is named by the
 [production setup](prod-setups.md); `--test` writes to `<output>_test` instead. The layout inside
 it is described in [Architecture](../concepts/architecture.md#storage-layout).
 
+`fs_watchdog` is an optional second file system holding the [CRAB watchdog's](../concepts/backends.md#stalled-jobs-the-watchdog)
+heartbeat flags; when it is unset they go to `fs_default` like everything else. Both take the same
+FLAF-style URI, and a plain `/...` path selects a local file system.
+
 ## `config/global.yaml` (committed defaults)
 
 ```yaml
