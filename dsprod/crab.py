@@ -441,9 +441,11 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
     def missing_law_source(cls, retries=None, delay=None):
         """The first of law's own CRAB sources that cannot be read, or None if all can.
 
-        With the software on EOS -- and `soft/` there being a symlink into AFS -- a submission can
-        hit a moment when law's own tree is simply not there. The error that surfaces from law then
-        is a copy of a path that never existed, so this names the real reason instead.
+        law's own tree lives under `soft/` in the checkout that drives the production, so a
+        submission can hit a moment when the storage holding it does not answer. The error that
+        surfaces from law then is a copy of a path that never existed, so this names the real
+        reason instead. No cause is diagnosed here: `os.path.isfile` answers `False` for a missing
+        path, a refused one and a failing mount alike.
         """
         retries = cls.source_retries if retries is None else retries
         delay = cls.source_retry_delay if delay is None else delay
@@ -459,6 +461,20 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
                 return path
         return None
 
+    @staticmethod
+    def law_source_error(path):
+        """What the storage answers for `path`, in the words a message can be acted on.
+
+        The probe above cannot say why it failed, and the difference decides who has to fix it, so
+        the errno is read once here rather than asked for in the message.
+        """
+        try:
+            os.stat(path)
+        except OSError as e:
+            return f"[Errno {e.errno}] {e.strerror}"
+        # the probe and this stat are seconds apart, so a path that blipped is answered for again
+        return "stat succeeds now -- not a regular file, or the path came back"
+
     @classmethod
     def _wait_for_law_sources(cls):
         """Last resort: refuse to build a job file against a tree that is not there.
@@ -469,8 +485,9 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
         path = cls.missing_law_source()
         if path is not None:
             raise RuntimeError(
-                f"{path} is not readable, so no CRAB job file can be built. law's own "
-                "tree is unreachable -- if it sits on EOS, the mount is likely down."
+                f"{path} is not readable ({cls.law_source_error(path)}), so no CRAB job file "
+                "can be built. law's own tree is unreachable: ENOENT points at the tree or its "
+                "mount, EACCES/EPERM at the credential that storage is reached with."
             )
 
     def create(self, **kwargs):
@@ -761,20 +778,27 @@ class DSProdCrabWorkflowProxy(
         return self._parked_retries_are_due()
 
     def submit(self, retry_jobs=None):
-        # Before anything else, and before law is allowed to touch its job data: law's submit()
-        # pops the jobs it is about to send out of `unsubmitted_jobs` and creates empty entries
-        # for them, and only *then* builds the job file. So a tree that has gone away is
-        # discovered after that bookkeeping has already happened, and the RuntimeError it raises
-        # takes the whole production down -- 16000 branches lost a submission round to a blip in
-        # an EOS/AFS mount. Skipping the round instead leaves every job exactly where it was and
-        # the next poll, minutes away, submits it. Probed once rather than waited out, because
-        # this runs inside the poll loop.
+        # Before law is handed control: the job file is built inside law's submit(), and the
+        # RuntimeError raised there for a tree that cannot be read is caught nowhere between it
+        # and luigi, so one unreadable path fails the whole workflow and ends the driver -- which
+        # it did on two consecutive days (2026-09-08, 2026-09-09). What law popped out of
+        # `unsubmitted_jobs` just before costs nothing: between that pop and the job file the only
+        # dump is the one on the nothing-to-submit early return, so the backlog on disk is intact
+        # and a restart resumes. Skipping the round leaves every job where it was and the next
+        # poll, minutes away, submits it. Probed once rather than waited out, because this runs
+        # inside the poll loop. Skipping cannot hide a real outage for long: law dumps its job
+        # data before it submits within one poll iteration, so where that dump shares the storage
+        # law is installed on -- as it does in the production, both under `$ANALYSIS_PATH` -- one
+        # skip is published and the next iteration's dump ends the run.
         missing = DSProdCrabJobFileFactory.missing_law_source(retries=1, delay=1.0)
         if missing is not None:
+            reason = DSProdCrabJobFileFactory.law_source_error(missing)
             self.task.publish_message(
-                f"law's own tree is unreachable ({missing}); skipping this submission round -- "
-                "nothing is lost, the next poll submits it. If this persists, check the mount "
-                "and the AFS token (klist / aklog)."
+                f"law's own tree is unreachable ({missing}: {reason}); skipping this submission "
+                "round -- nothing is lost, the next poll submits it. ENOENT points at the tree "
+                "or its mount, EACCES/EPERM at the credential that storage is reached with -- "
+                "`klist -f` shows both the expiry and the renewable window, which a running "
+                "production only ever renews and never creates."
             )
             return OrderedDict()
 
@@ -1011,7 +1035,8 @@ class CrabWorkflow(law.cms.CrabWorkflow):
 
     def crab_poll_callback(self, poll_data):
         # a large CRAB production polls for days, while law keeps writing its job status files to
-        # the AFS work area — renew the Kerberos ticket as the HTCondor backend does
+        # a work area whose storage authenticates every access — renew the Kerberos ticket as the
+        # HTCondor backend does
         if self._crab_kerberos_update is None:
 
             def renew_kerberos_ticket():
