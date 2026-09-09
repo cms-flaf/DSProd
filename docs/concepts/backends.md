@@ -302,6 +302,45 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     job carrying `dummy_job_id` and being retried with `error: unknown job id`. DSProd now checks
     the sandbox before submitting and reports that case directly.
 
+### When law's own tree briefly disappears
+
+DSProd's software is installed under `soft/` in the checkout that drives the production, so a
+submission can hit a moment when law's *installed* tree cannot be read. That is expensive without
+a guard because the job file is built inside law's `submit()` and the error raised there is caught
+nowhere between it and luigi: it leaves the poll loop, the whole workflow is marked failed and the
+driver ends — which it did to a 16 000-branch production on two consecutive days.
+
+The sources law needs are therefore probed **before** law is handed control. If they cannot be
+read, the submission round is abandoned: nothing is submitted, no job leaves the backlog, a message
+names the path, and the next poll — minutes away — submits normally. Only a tree that vanishes
+*inside* one submission still raises, from `create()`.
+
+Nothing is lost by the crash either way: the jobs are still recorded as unsubmitted on disk, which
+is why restarting the driver resumes where it left off. The guard removes the interruption, not a
+data loss.
+
+!!! tip "If it persists rather than blips"
+    The message carries the errno the storage answered with, because `os.path.isfile()` returns
+    `False` for every cause alike. `ENOENT` points at the tree or its mount not being there — each
+    `/eos` home letter is a separate automounted FUSE instance, so a mount can be reaped and
+    re-triggered, and `findmnt -T <path>` says whether it is there now. `EACCES`/`EPERM` points
+    at the credential that storage is reached with: an `/eos/home-*` or `/eos/user/*` path is
+    authenticated per access against the caller's Kerberos ticket (`getfattr --only-values -n
+    eos.identity <path>` names the credential cache in use), and a production **only ever renews**
+    a ticket, never creates one. Read `klist -f` for two things: `expires` (24 h) and `renew
+    until`, which is fixed at the original `kinit` and cannot be pushed out by renewals — a
+    production expected to run past it needs a fresh `kinit`. `tokens` and `aklog` matter only
+    where the checkout is installed on AFS.
+
+    Neither errno was captured for the two incidents — recovering it is exactly why the message
+    now carries one — so treat the split as a starting point, not a diagnosis.
+
+    A tree that stays unreadable does not leave the production skipping rounds forever. law dumps
+    its job data before it submits within one poll iteration, and in the production both that data
+    (`$ANALYSIS_PATH/data`) and the software live under the same mount: so one skip is published
+    and the next iteration's dump ends the run. A repeating message means the dump kept succeeding
+    in between — either the two sit on different storage, or the failure is intermittent.
+
 ### Stalled jobs (the watchdog)
 
 CRAB reports a job as `running` for as long as the batch system says its slot is held, which is not
