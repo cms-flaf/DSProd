@@ -302,6 +302,29 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     job carrying `dummy_job_id` and being retried with `error: unknown job id`. DSProd now checks
     the sandbox before submitting and reports that case directly.
 
+### When law's own tree briefly disappears
+
+DSProd's software sits on EOS and its `soft/` is a symlink into AFS, so a submission can hit a
+moment when law's *installed* tree cannot be read. That is expensive by default, because of the
+order inside law's `submit()`: it pops the jobs it is about to send out of its backlog and creates
+entries for them, and only then builds the job file — where the unreadable tree is discovered. The
+error raised there propagates out of the poll loop and luigi marks the whole workflow failed, which
+cost a 16 000-branch production two submission rounds on consecutive days.
+
+The sources law needs are therefore probed **before** law is handed control. If they cannot be
+read, the submission round is abandoned: nothing is submitted, no job leaves the backlog, a message
+names the path, and the next poll — minutes away — submits normally. Only a tree that vanishes
+*inside* one submission still raises, from `create()`.
+
+Nothing is lost by the crash either way: the jobs are still recorded as unsubmitted on disk, which
+is why restarting the driver resumes where it left off. The guard removes the interruption, not a
+data loss.
+
+!!! tip "If it persists rather than blips"
+    A message on every poll means the mount is really gone, or the AFS token has lapsed — DSProd
+    renews Kerberos while polling but cannot create a ticket. Check `klist` and `tokens`, and
+    re-run `kinit`/`aklog`.
+
 ### Stalled jobs (the watchdog)
 
 CRAB reports a job as `running` for as long as the batch system says its slot is held, which is not

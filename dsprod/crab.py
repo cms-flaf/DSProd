@@ -438,26 +438,40 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
     source_retry_delay = 3.0
 
     @classmethod
-    def _wait_for_law_sources(cls):
-        """Fail with the actual reason when law's own tree cannot be read.
+    def missing_law_source(cls, retries=None, delay=None):
+        """The first of law's own CRAB sources that cannot be read, or None if all can.
 
-        With the software on EOS a submission can hit a moment when it is not there, and the
-        error that surfaces then is a copy of a path that never existed. Waiting for the tree
-        turns a transient outage into a delay, and a real one into a message that names it.
+        With the software on EOS -- and `soft/` there being a symlink into AFS -- a submission can
+        hit a moment when law's own tree is simply not there. The error that surfaces from law then
+        is a copy of a path that never existed, so this names the real reason instead.
         """
+        retries = cls.source_retries if retries is None else retries
+        delay = cls.source_retry_delay if delay is None else delay
         base = os.path.dirname(os.path.abspath(law.contrib.cms.job.__file__))
         for rel in cls.law_sources:
             path = os.path.join(base, rel)
-            for attempt in range(cls.source_retries + 1):
+            for attempt in range(retries + 1):
                 if os.path.isfile(path):
                     break
-                if attempt < cls.source_retries:
-                    time.sleep(cls.source_retry_delay)
+                if attempt < retries:
+                    time.sleep(delay)
             else:
-                raise RuntimeError(
-                    f"{path} is not readable, so no CRAB job file can be built. law's own "
-                    "tree is unreachable -- if it sits on EOS, the mount is likely down."
-                )
+                return path
+        return None
+
+    @classmethod
+    def _wait_for_law_sources(cls):
+        """Last resort: refuse to build a job file against a tree that is not there.
+
+        `DSProdCrabWorkflowProxy.submit` checks the same sources before law is allowed to touch
+        its job data, so reaching this raise means the tree went away inside one submission.
+        """
+        path = cls.missing_law_source()
+        if path is not None:
+            raise RuntimeError(
+                f"{path} is not readable, so no CRAB job file can be built. law's own "
+                "tree is unreachable -- if it sits on EOS, the mount is likely down."
+            )
 
     def create(self, **kwargs):
         self._wait_for_law_sources()
@@ -747,6 +761,23 @@ class DSProdCrabWorkflowProxy(
         return self._parked_retries_are_due()
 
     def submit(self, retry_jobs=None):
+        # Before anything else, and before law is allowed to touch its job data: law's submit()
+        # pops the jobs it is about to send out of `unsubmitted_jobs` and creates empty entries
+        # for them, and only *then* builds the job file. So a tree that has gone away is
+        # discovered after that bookkeeping has already happened, and the RuntimeError it raises
+        # takes the whole production down -- 16000 branches lost a submission round to a blip in
+        # an EOS/AFS mount. Skipping the round instead leaves every job exactly where it was and
+        # the next poll, minutes away, submits it. Probed once rather than waited out, because
+        # this runs inside the poll loop.
+        missing = DSProdCrabJobFileFactory.missing_law_source(retries=1, delay=1.0)
+        if missing is not None:
+            self.task.publish_message(
+                f"law's own tree is unreachable ({missing}); skipping this submission round -- "
+                "nothing is lost, the next poll submits it. If this persists, check the mount "
+                "and the AFS token (klist / aklog)."
+            )
+            return OrderedDict()
+
         # explicitly, and before the wave gate: holding jobs back below returns without
         # delegating to the mixin, which would let a mass retry through on a later wave
         self.stop_on_mass_initial_retry(retry_jobs)
