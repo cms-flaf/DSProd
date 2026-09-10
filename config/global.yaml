@@ -41,7 +41,9 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #     min_failure_rate: 0.5         ... and the fraction of jobs SENT there (ended + in flight)
 #     relative_factor: 2.0          ... and how much worse than the other sites it must be
 #     min_baseline_jobs: 20         ... judged against at least this many jobs elsewhere
-#     quarantine_hours: 6           how long it stays out; afterwards its record starts clean
+#     quarantine_hours: 24          how long its FIRST quarantine lasts; each further one
+#                                   doubles, judged on the outcomes recorded after each ban
+#     max_quarantine_hours: 768     the ceiling the doubling stops at -- 32 days
 #     window_hours: 24              outcomes older than this stop counting
 #     max_sites: 10                 never quarantine more than this many sites at once
 #   watchdog:                       fail a job whose slot is held but whose payload has stopped.
@@ -52,7 +54,7 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #     max_per_interval: 5           brake: never fail more than this many jobs in one interval
 #     max_per_branch: 1             how often one branch may be rescued this way; a branch that
 #                                   stalls wherever it runs is the branch's problem, and every
-#                                   verdict spends one of its four attempts
+#                                   verdict spends one of its attempts
 #     max_stale_fraction: 0.5       above this share of running jobs looking stale, read it as a
 #                                   storage fault and issue nothing
 #     dry_run: false                log the verdicts it would issue, issue none

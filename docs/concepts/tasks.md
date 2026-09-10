@@ -105,7 +105,7 @@ the whole era (law marks such jobs `initially missing task outputs`). Nothing de
 so completeness survives the merge. To redo a seed deliberately, delete its record along with its
 nano file.
 
-`RunProd` carries its own failure budget (`retries: 3`, `tolerance: 0.05`, `acceptance: 1.0`)
+`RunProd` carries its own failure budget (`retries: 9`, `tolerance: 0.05`, `acceptance: 1.0`)
 rather than law's, so one dead branch cannot end a multi-day production while a short sample still
 fails the workflow.
 
@@ -120,14 +120,19 @@ sets its own budget:
 
 | | value | meaning |
 |---|---|---|
-| `retries` | 3 | 4 attempts per branch: law submits a job once, then resubmits it `retries` times |
+| `retries` | 9 | 10 attempts per branch: law submits a job once, then resubmits it `retries` times |
 | `tolerance` | 0.05 | up to 5 % of the branches may run out of attempts without ending the run |
 | `acceptance` | 1.0 | law's default, kept: **every** branch must finish for the workflow to succeed |
 
-Four attempts is enough to walk away from a black-hole site — its
-[quarantine](../concepts/backends.md#failing-sites) needs 5 failures at that site to fire — while a
-branch that keeps dying is called failed in roughly a day rather than occupying the two that six
-generations of a 7 h job would take. (law offers a branch that has just spent its last attempt to
+Ten attempts is what it takes to survive a *run* of broken sites, which is how a budget is really
+spent: of the 301 branches of the 2026-09 Run3_2023BPix production that failed more than once, 295
+failed at two or more different sites, ~30 % of all attempts failed, and three sites failed 93–98 %
+of everything sent to them. A budget of four made it a coin flip whether a healthy branch escaped
+them before running out — 34 of 16 000 branches were written off with nothing wrong with any of
+them. A larger budget costs a successful branch nothing; only a branch that is genuinely dead pays,
+in wall clock nobody is waiting for, since `tolerance` keeps the production running past it and the
+[quarantine](../concepts/backends.md#failing-sites) holds the site that spent the budget out for
+longer each time. (law offers a branch that has just spent its last attempt to
 the submission step once more and then ignores whatever that job reports, so the number of CRAB
 jobs a hopeless branch produces is one higher than its budget. Only the budgeted attempts decide
 when it counts as failed.)
@@ -154,7 +159,7 @@ crashes the generator — makes every run end the same way, and every rerun hand
 so repeated reruns retry it forever. It shows up as runs of the same length failing on the same
 branch numbers; the fix is to fix or drop the branch, not to raise the budget.
 
-Both are ordinary law parameters, so a run can override them — `--RunProd-retries 8`,
+Both are ordinary law parameters, so a run can override them — `--RunProd-retries 3`,
 `--RunProd-tolerance 0.1`. Address `RunProd` by name: like `--max-runtime` and `--n-cpus`, neither
 is passed on to or taken from the tasks around it, which is what keeps `NanoMergeTask` from handing
 its `RunProd` requirement law's `tolerance: 0.0` back.

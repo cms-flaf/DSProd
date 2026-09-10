@@ -47,7 +47,7 @@ DEFAULTS = {
     "max_per_interval": 5,
     #: how often one branch may be rescued this way before it is left to the wall-clock rule; a
     #: branch that stalls wherever it runs is the branch's problem, not the site's, and each
-    #: verdict spends one of its four attempts
+    #: verdict spends one of its attempts
     "max_per_branch": 1,
     #: a listing in which this fraction of running jobs looks stale is an infrastructure fault
     "max_stale_fraction": 0.5,

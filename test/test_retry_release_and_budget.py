@@ -389,18 +389,27 @@ class TestFailureBudget(unittest.TestCase):
         self.assertEqual(self.direct.acceptance, 1.0)
         self.assertFalse(self.direct.check_unreachable_acceptance)
 
-    def test_the_retry_budget_is_bounded_but_not_one_shot(self):
+    def test_the_retry_budget_survives_a_run_of_broken_sites(self):
+        # The bound this used to assert -- 30 h, i.e. four attempts of a 7.1 h job -- was set when
+        # the cost of an attempt looked like the thing to protect. Run3_2023BPix showed the budget
+        # is spent on a SEQUENCE of broken sites (295 of its 301 repeatedly-failing branches
+        # failed at 2+ different sites, and three sites failed 93-98 % of everything sent to
+        # them), so a budget that cannot outlast a few of them writes off healthy branches: 34 of
+        # 16000, none of which had anything wrong with it. What must stay bounded is the number of
+        # attempts, not the wall clock -- `tolerance` keeps the production running past a dead
+        # branch, and only a dead branch pays the wall clock.
         attempts = (
             self.direct.retries + 1
         )  # law submits a job once, then retries it `retries`
         self.assertGreater(
             attempts, 1, "one transient site failure must not condemn a branch"
         )
-        self.assertLessEqual(
-            attempts * 7.1,
-            30.0,
-            "a branch that keeps dying must not burn days of wall clock",
+        self.assertGreaterEqual(
+            attempts,
+            10,
+            "a branch must survive a run of independently broken sites",
         )
+        self.assertLessEqual(attempts, 20, "the budget is still bounded, not unlimited")
 
     def test_the_merge_task_no_longer_overwrites_the_budget(self):
         # the leak: driving a production through NanoMergeTask handed `RunProd` the merge task's
@@ -420,10 +429,12 @@ class TestFailureBudget(unittest.TestCase):
         # `--RunProd-tolerance 0.5` arrives as a luigi class-level value; without the exclusion
         # `req()` would pass the merge task's own value on top of it and discard it silently
         cfg = luigi.configuration.get_config()
-        cfg.set("RunProd", "retries", "9")
+        cfg.set("RunProd", "retries", "7")
         cfg.set("RunProd", "tolerance", "0.5")
         try:
-            self.assertEqual(RunProd.req(self.merge).retries, 9)
+            # 7, not the class default: an override that is accepted and then silently
+            # discarded would otherwise pass this assertion on the default alone
+            self.assertEqual(RunProd.req(self.merge).retries, 7)
             self.assertEqual(RunProd.req(self.merge).tolerance, 0.5)
         finally:
             cfg.remove_option("RunProd", "retries")
