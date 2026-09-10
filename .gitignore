@@ -15,3 +15,6 @@ __pycache__/
 
 # crab drops one wherever it runs; the wrapper keeps it in $DSPROD_CRAB_HOME, this catches strays
 crab.log
+
+# `mkdocs build` output; the docs are published from CI, never from a local build
+/site/
