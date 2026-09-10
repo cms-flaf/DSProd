@@ -222,9 +222,23 @@ submitted without the quarantined sites. It is on by default; the thresholds liv
 | `min_failure_rate` | 0.5 | ... and the fraction of the jobs *sent* there that failed |
 | `relative_factor` | 2.0 | ... and how many times worse than the other sites it must be |
 | `min_baseline_jobs` | 20 | ... judged against at least this many jobs elsewhere |
-| `quarantine_hours` | 6 | how long it stays out; afterwards its record starts clean |
+| `quarantine_hours` | 24 | how long its **first** quarantine lasts; each further one doubles |
+| `max_quarantine_hours` | 768 | the ceiling the doubling stops at — 32 days |
 | `window_hours` | 24 | outcomes older than this stop counting |
 | `max_sites` | 10 | never quarantine more than this many sites at once |
+
+A site that is still broken when its quarantine runs out earns a longer one: the bans double,
+24 h → 48 h → 96 h → … → 32 days, because the count of quarantines served is kept when a ban
+is lifted. A fixed 6-hour ban that also wiped the site's record was no defence against a site that
+stays broken — it returned to the whitelist with a clean sheet, had to earn `min_failures` again,
+and bought itself another wave every six hours. Over 2026-09-08..10 three sites did exactly that
+three times each, and 93 % of that production's 4197 job failures came from them.
+
+The *evidence* still ages out with `window_hours`, and a lifted ban is never re-armed on the
+failures it was served for — the site is judged on the outcomes recorded after its ban, so one
+clean wave clears the quarantine (though never the count) and one bad one doubles it.
+`quarantines` in `data/crab_site_stats.json` is the count; delete the file to forget a site's
+history entirely.
 
 Only what CRAB says about a job enters the record, and only from the status response itself: a
 job that finished, or that failed **with a job-level error code**. Everything else is law's own
@@ -243,12 +257,14 @@ hours, so a rate computed over finished jobs alone reads as ~100 % at every site
 production, no site stands out, and nothing is ever quarantined. Counting jobs in flight, the site
 that swallowed 335 of its 391 jobs sits at 0.86 while everyone else is between 0.007 and 0.08.
 
-The last four defaults are what keep this from making things worse. A site is only quarantined for
+These defaults are what keep this from making things worse. A site is only quarantined for
 being **worse than the others**, judged against a real baseline, so a bug of your own — which fails
 everywhere — blacklists nothing; a lone site is never quarantined, because there would be nowhere
 left to run; at most `max_sites` are held out at once; and every quarantine expires, after which the
-site starts from a clean record rather than staying condemned. Jobs already submitted keep going to
-the site they were assigned — CRAB cannot re-target a running task.
+site is judged again on the outcomes recorded after its ban rather than staying condemned on the
+ones that earned it — what is kept is the count of bans served, which sets the length of the next
+one. Jobs already submitted keep going to the site they were assigned — CRAB cannot re-target a
+running task.
 
 A site you know is bad belongs in the static `blacklist` instead: that one is never lifted.
 
@@ -384,7 +400,7 @@ the driver watches nothing.
     resubmitted immediately and the stalled slot is left to CRAB's wall-clock limit.
 
 !!! warning "Refusing to act is the safe direction, and it does refuse"
-    Every verdict spends one of a branch's four attempts, and ~30 exhausted branches of a 600-job
+    Every verdict spends one of a branch's attempts, and ~30 exhausted branches of a 600-job
     run end the whole workflow — so a watchdog that condemns healthy jobs is far worse than one
     that misses a stall. It issues nothing when the listing cannot be read (no listing is no
     evidence, and an outage must not accumulate staleness); nothing for a job too young to have

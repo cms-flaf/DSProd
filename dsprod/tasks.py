@@ -987,27 +987,33 @@ class RunProd(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
     # 594 jobs is 6018 and the worst job ever recorded anywhere in this production is 8811.
     memory = copy_param(HTCondorWorkflow.memory, 10000)
 
-    # 4 attempts per job: law submits a job once and then resubmits it `retries` times, so the
+    # 10 attempts per job: law submits a job once and then resubmits it `retries` times, so the
     # budget a branch really burns is `retries + 1`. (It then offers the exhausted job to the
     # submission step one last time and ignores whatever that job reports, so the number of CRAB
     # jobs is one higher again; only the budgeted attempts decide when a branch counts as failed.)
-    # Every attempt after the first costs a generation of wall clock -- a job of this chain runs
-    # 7.1 h at the median -- so law's default of 5 buys a broken branch six generations, ~2 days,
-    # before it is finally called failed. Four is enough to walk away from a black-hole site
-    # (whose own quarantine needs 5 failures at that site to fire) while a branch that keeps dying
-    # is called failed in roughly a day.
-    retries = copy_param(HTCondorWorkflow.retries, 3)
+    # A budget of four was set when the cost of an attempt -- one 7.1 h generation at the median --
+    # looked like the thing to economise on. What the 2026-09 Run3_2023BPix production showed is
+    # that the budget is spent on a *sequence* of independently broken sites, not on one: 295 of
+    # its 301 branches that failed more than once failed at two or more different sites, ~30 % of
+    # all attempts failed, and three sites failed 93-98 % of everything sent to them. Four
+    # attempts is then a coin-flip whether a branch escapes the broken sites before it runs out,
+    # which is how 34 branches of 16000 were written off while nothing was wrong with any of them.
+    # Ten makes that vanishingly unlikely, and costs nothing at all for a branch that succeeds --
+    # only a branch that is genuinely dead pays, and it pays in wall clock nobody is waiting for
+    # (`tolerance` keeps the production running past it, and the quarantine now escalates, so the
+    # sites that spend a budget are held out for longer and longer).
+    retries = copy_param(HTCondorWorkflow.retries, 9)
     # ... and 5 % of the branches may end up out of attempts without stopping the run (law reads
     # a tolerance at or below 1 as a fraction, so a production of fewer than 20 branches is still
     # ended by its first dead branch and needs an absolute `--RunProd-tolerance 2`). law's
     # default of 0.0 means the FIRST branch to burn its budget raises `tolerance exceeded` and
     # takes a multi-day production with it, 4799 finished jobs and all -- and with a 45-minute
-    # retry release window and 56 % of failures arriving in under 6 min, one bad site can spend a
-    # branch's four attempts in an afternoon. Only a branch that burns all four counts here, which
-    # a failing site rarely produces on its own (one host failed 258 of 3270 jobs and nearly all
-    # of them succeeded on a retry elsewhere), so 5 % is room for the unlucky ones; a production
-    # that is broken everywhere still stops within the hour, since every one of its branches is
-    # out of attempts by then.
+    # retry release window and 56 % of failures arriving in under 6 min, a bad site can spend
+    # several of a branch's attempts in an afternoon. Only a branch that burns the whole budget
+    # counts here, which a failing site rarely produces on its own (one host failed 258 of 3270
+    # jobs and nearly all of them succeeded on a retry elsewhere), so 5 % is room for the unlucky
+    # ones; a production that is broken everywhere still stops on its own, since every one of its
+    # branches is out of attempts by then.
     #
     # `acceptance` stays at law's 1.0, and that -- not `tolerance` -- is what forbids a silently
     # short sample: the run keeps going past a failed branch, but once no job is left to finish,

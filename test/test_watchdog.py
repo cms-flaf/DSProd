@@ -7,7 +7,7 @@ have reclaimed them for another 8 h. The evidence is a flag file per job whose m
 the job itself advances.
 
 Most of what follows tests the cases where a verdict must NOT be issued, because every one of them
-costs a branch one of its four attempts and ~30 exhausted branches of a 600-job run end the whole
+costs a branch one of its attempts and ~30 exhausted branches of a 600-job run end the whole
 workflow. The dangerous failure is not a missed stall; it is a watchdog that condemns healthy jobs.
 """
 
@@ -165,7 +165,7 @@ class NoVerdictIsIssued(unittest.TestCase):
 
     def test_for_a_branch_that_has_already_been_rescued_once(self):
         """A branch that stalls wherever it runs is the branch's problem, not the slot's, and
-        each verdict spends one of its four attempts."""
+        each verdict spends one of its attempts."""
         w = watchdog([Flag(7, age_minutes=99)])
         self.assertEqual(len(verdicts(w, jobs((1, 7)), status(1))), 1)
         again = verdicts(w, jobs((2, 7)), status(2))
