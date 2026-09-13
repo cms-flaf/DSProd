@@ -203,6 +203,57 @@ waives it, which is not recommended with an open site pool.
     put a storage-only site (e.g. `T3_CH_CERNBOX`) there, or CRAB refuses the submission with
     "not in the list of known CMS Processing Site Names".
 
+    The same applies to the default: the tier globs are expanded against the list of processing
+    site names CRAB itself validates against — CRIC's `?json&preset=site-names`, the rows of type
+    `psn`, which is what `WMCore.Services.CRIC.getAllPSNs` returns — cached for a day in
+    `data/cms_psn_sites.json`. An earlier version asked CRIC for every site with `computeunits`
+    instead, on the reasoning that those are the ones that run jobs. They are not the same set: it
+    admitted three names that are not processing sites, one of which
+    (`T3_CH_CERN_HelixNebula_REHA`, an active site with a real compute element) refused a
+    36 000-branch production, while omitting 39 names that are.
+
+### A submission the server refuses
+
+`crab submit` returning successfully does not mean the task was accepted: the TaskWorker validates
+it afterwards and can set `SUBMITREFUSED`, which is **terminal** — the task never reaches a
+scheduler, and `crab resubmit` and even `crab kill` refuse it.
+
+Such a task never publishes per-job information, which law reports as an unreadable status, so it
+used to be retried as though it were merely slow — four attempts a poll, 15 s apart, for as many
+polls as `max_unreadable_polls` allows, and then the driver died with the real reason buried a
+thousand repetitions up the log. DSProd now recognises the server status: the refused task's jobs
+are reported **failed**, so law submits them again as a *new* task, and the reason the server gave
+is printed once, with the project directory and the site list it was computed from:
+
+```
+the CRAB server refused this submission (SUBMITREFUSED). It will never run, so its jobs are
+reported failed and law will submit them as a new task.
+  project:  .../crab_RunProd_Run3_XHHbbWW_a741224d
+  server:   A site name T3_CH_CERN_HelixNebula_REHA that user specified is not in the list of
+            known CMS Processing Site Names
+  sites:    computed from .../data/cms_psn_sites.json, now dropped so the next submission
+            re-reads CRIC
+```
+
+The cached site list is deleted at that point, so a refusal caused by a stale list heals itself on
+the next wave. A **second refused submission stops the run** — counted per submission, so polling
+one refused task ten times is still one refusal: a refusal is a verdict on what was sent rather
+than on the grid, and once the site list has been re-read the second one cannot be the cache.
+Retrying instead would spend every branch's attempts on the same verdict and end in "acceptance
+not reached" with the cause long out of sight. The jobs of that last task are still reported
+failed, so law's own bookkeeping stays consistent whichever way the run ends.
+
+!!! note "`WAITING` is not a failure"
+    Every task now enters the CRAB database as `WAITING` and is promoted to `NEW` by a separate
+    scheduler, and law 0.1.20 does not know that status — so a perfectly healthy submission looked
+    unreadable for its first polls, costing the retry delay and a step towards
+    `max_unreadable_polls` each time. That is most visible when the TaskWorker is backlogged, i.e.
+    when several productions submit at once. `WAITING` is now read as "accepted, not yet
+    scheduled": the jobs stay pending and nothing is retried. The wait is still bounded — it is
+    repeated in the log while it lasts and stops the run after `max_unscheduled_polls` (60, five
+    hours at the default interval), because a task that never reaches a scheduler would otherwise
+    stall the production in silence.
+
 ### Failing sites
 
 One broken worker node fails jobs in seconds, frees its slot and takes the next one, so it can eat
