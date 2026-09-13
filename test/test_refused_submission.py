@@ -151,7 +151,9 @@ class TellingApartTheThreeUnreadableResponses(unittest.TestCase):
 
 
 class WhenTheServerRefuses(unittest.TestCase):
-    def query(self, m, out=REFUSED_OUTPUT, n=3, proj_dir="/proj"):
+    def query(self, m, out=REFUSED_OUTPUT, n=3, proj_dir="/proj", ours=True):
+        if ours:
+            m._submitted_projects.add(proj_dir)
         ids = job_ids(m, n)
         with mock.patch.object(
             law.cms.CrabJobManager,
@@ -354,6 +356,60 @@ class StoppingTheRunActuallyStopsIt(unittest.TestCase):
         workflow._dsprod_job_manager = manager()
         workflow._crab_kerberos_update = lambda: None
         CrabWorkflow.crab_poll_callback(workflow, mock.Mock())
+
+
+class ARefusalInheritedFromAnEarlierRun(unittest.TestCase):
+    """The 2026-09-13 restart: three tasks refused *before* the fix was deployed were re-polled by
+    the corrected run, counted as its own refusals, and stopped it on the first poll -- before the
+    5000 branches they held could be submitted again with the corrected whitelist."""
+
+    def query(self, m, proj_dir):
+        ids = job_ids(m)
+        with mock.patch.object(
+            law.cms.CrabJobManager,
+            "query",
+            side_effect=lambda *a, **k: DSProdCrabJobManager.parse_query_output(
+                REFUSED_OUTPUT, proj_dir, ids
+            ),
+        ), mock.patch("dsprod.crab.time.sleep"):
+            return m.query(proj_dir, job_ids=ids), ids
+
+    def test_old_refusals_do_not_stop_a_corrected_run(self):
+        m = manager()
+        for proj in ("/old-1", "/old-2", "/old-3"):
+            self.query(m, proj)
+        self.assertIsNone(m.stop_reason)
+
+    def test_but_their_jobs_are_still_failed_so_the_branches_come_back(self):
+        """This is the recovery: law resubmits them into a task built with the corrected list."""
+        m = manager()
+        result, ids = self.query(m, "/old-1")
+        self.assertEqual(set(result), set(ids))
+        self.assertTrue(all(d["status"] == m.FAILED for d in result.values()))
+
+    def test_the_report_says_it_was_not_this_run_that_sent_it(self):
+        m = manager()
+        with mock.patch("builtins.print") as printed:
+            self.query(m, "/old-1")
+        said = "\n".join(str(c.args[0]) for c in printed.call_args_list if c.args)
+        self.assertIn("earlier run", said)
+
+    def test_a_refusal_of_this_runs_own_submission_still_counts(self):
+        m = manager()
+        self.query(m, "/old-1")
+        self.query(m, "/old-2")
+        m._submitted_projects.update({"/new-1", "/new-2"})
+        self.query(m, "/new-1")
+        self.assertIsNone(m.stop_reason)
+        self.query(m, "/new-2")
+        self.assertIn("made by this run", m.stop_reason)
+
+    def test_submitting_is_what_marks_a_task_as_this_runs(self):
+        m = manager()
+        job_id = m.JobId(1, "task", "/fresh")
+        with mock.patch.object(law.cms.CrabJobManager, "submit", return_value=[job_id]):
+            m.submit("job.jdl")
+        self.assertIn("/fresh", m._submitted_projects)
 
 
 class AnUnscheduledTaskCannotStallForever(unittest.TestCase):

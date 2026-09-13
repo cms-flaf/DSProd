@@ -236,9 +236,12 @@ reported failed and law will submit them as a new task.
 ```
 
 The cached site list is deleted at that point, so a refusal caused by a stale list heals itself on
-the next wave. A **second refused submission stops the run** — counted per submission, so polling
-one refused task ten times is still one refusal: a refusal is a verdict on what was sent rather
-than on the grid, and once the site list has been re-read the second one cannot be the cache.
+the next wave. A **second refused submission of this run stops the run** — counted per submission,
+so polling one refused task ten times is still one refusal, and a task refused by an *earlier* run
+does not count at all: a resumed production re-polls those, and they say nothing about the
+configuration it is running with. Their jobs are still failed, which is exactly how their branches
+come back on a corrected run. A refusal is a verdict on what was sent rather than on the grid, and
+once the site list has been re-read a second one cannot be the cache.
 Retrying instead would spend every branch's attempts on the same verdict and end in "acceptance
 not reached" with the cause long out of sight. The jobs of that last task are still reported
 failed, so law's own bookkeeping stays consistent whichever way the run ends.

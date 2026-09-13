@@ -281,8 +281,11 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         self._unreadable = {}
         #: keys already reported, so a status that repeats every poll is printed once
         self._noted = set()
-        #: project dirs the server refused, counted once each: polling one refused task ten times
-        #: is one refused submission, not ten
+        #: project dirs this run submitted, so that a refusal can be attributed to the
+        #: configuration this run is using rather than to one an earlier run had
+        self._submitted_projects = set()
+        #: project dirs of *this run's* submissions the server refused, counted once each: polling
+        #: one refused task ten times is one refused submission, not ten
         self._refused_projects = set()
         #: proj_dir -> consecutive polls the task has been accepted but not scheduled
         self._unscheduled = {}
@@ -361,6 +364,21 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             for line in (out or "").replace("\r", "").split("\n")
             if line.strip().startswith("Warning:")
         ]
+
+    def submit(self, *args, **kwargs):
+        """Submit, and remember the task that came of it.
+
+        Only a refusal of a task *this* run submitted says anything about the configuration this
+        run is using. A resumed production re-polls the tasks of earlier runs, refused ones
+        included: counting those stopped a corrected production on its first poll, before it could
+        resubmit their branches (2026-09-13).
+        """
+        job_ids = super(DSProdCrabJobManager, self).submit(*args, **kwargs)
+        for job_id in job_ids or []:
+            proj_dir = getattr(job_id, "proj_dir", None)
+            if proj_dir:
+                self._submitted_projects.add(str(proj_dir))
+        return job_ids
 
     @classmethod
     def parse_query_output(cls, out, proj_dir, job_ids, skip_transfers=False):
@@ -571,14 +589,19 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             # the report says the list was dropped, so a failure to drop it must not be silent
             print(f"could not drop the cached site list {path}: {exc}")
 
-    def _refusal_report(self, exc):
+    def _refusal_report(self, exc, ours=True):
         """Everything an operator needs to act, in one message.
 
         The server names only the first site it objected to, so the list it was given matters as
         much as the objection: a second bad name would otherwise surface one submission later.
         """
+        whose = (
+            "this submission"
+            if ours
+            else "a submission left by an earlier run (nothing this run sent)"
+        )
         lines = [
-            f"the CRAB server refused this submission ({exc.state}). It will never run, so its "
+            f"the CRAB server refused {whose} ({exc.state}). It will never run, so its "
             "jobs are reported failed and law will submit them as a new task.",
             f"  project:  {exc.proj_dir}",
         ]
@@ -642,19 +665,21 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         which `StopOnMassInitialRetryProxy` counts.
         """
         self._unreadable.pop(proj_dir, None)
-        self._refused_projects.add(proj_dir)
+        ours = str(proj_dir) in self._submitted_projects
+        if ours:
+            self._refused_projects.add(proj_dir)
         # the whitelist is computed from a cached site list, and a name CRAB does not know is the
         # likeliest reason for a refusal, so the next submission must not reuse that cache
         self._invalidate_site_cache()
-        self._note_once(("refused", proj_dir), self._refusal_report(exc))
+        self._note_once(("refused", proj_dir), self._refusal_report(exc, ours))
         if len(self._refused_projects) >= self.max_refused_submissions:
             # recorded, not raised: `crab_poll_callback` is the one hook law lets an exception out
             # of. The jobs are still reported failed below, so the state law sees stays consistent
             # whichever way the run ends.
             self.stop_reason = (
-                f"{len(self._refused_projects)} CRAB submissions have been refused by the server, "
-                "so the next one would be too: this is a configuration fault, not bad luck.\n"
-                + self._refusal_report(exc)
+                f"{len(self._refused_projects)} submissions made by this run have been refused by "
+                "the server, so the next one would be too: this is a configuration fault, not bad "
+                "luck.\n" + self._refusal_report(exc, ours)
             )
         if job_ids is None:
             job_ids = self._job_ids_from_proj_dir(proj_dir)
