@@ -224,6 +224,33 @@ def _verify_code_tarball(path, expected):
         )
 
 
+class CrabTaskRefused(Exception):
+    """A task the CRAB server will never run, carrying the reason it gave.
+
+    Raised instead of law's generic unreadable-status error so that `query` can tell a dead task
+    from a slow one without re-parsing the response.
+    """
+
+    def __init__(self, state, warnings, proj_dir):
+        self.state = state
+        self.warnings = list(warnings or [])
+        self.proj_dir = proj_dir
+        reason = "; ".join(self.warnings) or "no reason given by the server"
+        super(CrabTaskRefused, self).__init__(
+            f"the CRAB server refused {os.path.basename(str(proj_dir))} ({state}): {reason}"
+        )
+
+
+class CrabTaskNotScheduledYet(Exception):
+    """A task the CRAB server has accepted but not yet handed to a scheduler."""
+
+    def __init__(self, state):
+        self.state = state
+        super(CrabTaskNotScheduledYet, self).__init__(
+            f"the task is {state}: accepted by the CRAB server, not yet on a scheduler"
+        )
+
+
 class DSProdCrabJobManager(law.cms.CrabJobManager):
     """CRAB job manager that rides out a status response it cannot read.
 
@@ -252,10 +279,88 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         super(DSProdCrabJobManager, self).__init__(*args, **kwargs)
         #: proj_dir -> number of consecutive polls whose response could not be read
         self._unreadable = {}
+        #: keys already reported, so a status that repeats every poll is printed once
+        self._noted = set()
+        #: project dirs the server refused, counted once each: polling one refused task ten times
+        #: is one refused submission, not ten
+        self._refused_projects = set()
+        #: proj_dir -> consecutive polls the task has been accepted but not scheduled
+        self._unscheduled = {}
+        #: why the run must stop, read and raised by the poll callback. Raising from `query` does
+        #: not work: law runs it in a thread pool and `get_async_result_silent` turns an exception
+        #: into the *result*, so the raise would be counted as one more unreadable poll while the
+        #: refused task's jobs stayed unfailed and every other project lost that poll's status.
+        self.stop_reason = None
         #: job ids already recorded, and the in-flight counts per project
         self._stats_seen = set()
         self._stats_lock = threading.Lock()
         self._in_flight = {}
+
+    #: server statuses of a task that will never produce a job. `SUBMITREFUSED` is set by the CRAB
+    #: TaskWorker when it rejects the request outright -- an unknown site name in the whitelist, say
+    #: -- and it is absorbing: the TaskWorker only ever picks up `HOLDING`, and `crab resubmit` and
+    #: even `crab kill` refuse a task in it. Polling it again can only repeat, so it is reported as
+    #: a failure of its jobs instead, which law retries into a fresh task. `SUBMITFAILED` is the
+    #: An explicit list, never "whatever law will not accept": law 0.1.20 does not accept
+    #: `WAITING` either, and that is every task's first status. `SUBMITFAILED` is deliberately
+    #: absent -- that is the TaskWorker or the schedd failing rather than refusing, i.e. the
+    #: transient class, which the retry path already handles.
+    terminal_server_states = ("SUBMITREFUSED",)
+
+    #: statuses meaning "accepted, but not on a scheduler yet" that law 0.1.20 does not know. Every
+    #: task now enters the CRAB database as `WAITING` (`CRABInterface/DataWorkflow.py`) and is
+    #: promoted later, so without this a perfectly healthy submission spends `query_retries` x
+    #: `query_retry_delay` seconds being retried and counts against `max_unreadable_polls` -- and a
+    #: backlogged TaskWorker, i.e. several productions submitting at once, is exactly when a task
+    #: lingers there.
+    pending_server_states = ("WAITING",)
+
+    #: polls a task may spend unscheduled before the run is stopped. The point of accepting the
+    #: status at all is that a backlogged TaskWorker is normal, so this is deliberately generous --
+    #: five hours at the default interval -- but it cannot be absent: a task that never leaves
+    #: `WAITING` would otherwise be polled for ever with every job pending and nothing said.
+    max_unscheduled_polls = 60
+
+    #: how often the wait is repeated in the log while it lasts
+    unscheduled_report_every = 12
+
+    #: distinct submissions the server may refuse before the run is stopped. A refusal is a verdict
+    #: on what was sent, not on the grid: the first one can be a stale site list, which is dropped
+    #: here, so a second one on a freshly read list is a configuration fault. Retrying instead
+    #: would spend every branch's attempts on the same verdict and end in "acceptance not reached".
+    max_refused_submissions = 2
+
+    @classmethod
+    def server_status(cls, out):
+        """The `Status on the CRAB server` value, matched the way law matches it.
+
+        `query_server_status_cre` is anchored `^...$` and compiled without `re.MULTILINE`, and law
+        applies it per line; searching the whole response with it returns nothing.
+        """
+        for line in (out or "").replace("\r", "").split("\n"):
+            match = cls.query_server_status_cre.match(line.strip())
+            if match:
+                return match.group(1).strip()
+        return None
+
+    @classmethod
+    def server_state(cls, out):
+        """Just the state of the server status, without the `on command SUBMIT` half."""
+        status = cls.server_status(out)
+        return (status or "").split(" on command ")[0].strip().upper()
+
+    @classmethod
+    def server_warnings(cls, out):
+        """The `Warning:` lines of a status response -- where a refusal states its reason.
+
+        A refused task carries no `Failure message from server`: `tm_task_failure` stays empty and
+        the TaskWorker uploads the reason as a task warning, which the client prints as `Warning:`.
+        """
+        return [
+            line.split(":", 1)[1].strip()
+            for line in (out or "").replace("\r", "").split("\n")
+            if line.strip().startswith("Warning:")
+        ]
 
     @classmethod
     def parse_query_output(cls, out, proj_dir, job_ids, skip_transfers=False):
@@ -265,12 +370,22 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         output it read, so an unreadable response cannot be diagnosed after the fact. Attach the
         head of it -- the status lines live in the first few lines, and the per-job JSON that
         follows is megabytes, so a slice is enough.
+
+        A task the server has refused, and one it has merely not scheduled yet, are both reported
+        by law as an unreadable status; they are told apart here, on the server status law itself
+        extracted. The test happens only after law has refused the response, so a task that still
+        publishes per-job JSON -- a large `FAILED` or `KILLED` one -- keeps its real job states.
         """
         try:
             return super(DSProdCrabJobManager, cls).parse_query_output(
                 out, proj_dir, job_ids, skip_transfers=skip_transfers
             )
         except Exception as exc:
+            state = cls.server_state(out)
+            if state in cls.terminal_server_states:
+                raise CrabTaskRefused(state, cls.server_warnings(out), proj_dir)
+            if state in cls.pending_server_states:
+                raise CrabTaskNotScheduledYet(state)
             head = [
                 line[:200]
                 for line in (out or "").replace("\r", "").split("\n")[:12]
@@ -284,6 +399,9 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
 
     #: per-site record to feed, injected by CrabWorkflow.crab_create_job_manager; None disables it
     site_stats = None
+
+    #: cached CRIC site list to drop when a submission is refused, injected the same way
+    site_cache_path = None
 
     #: in-flight counts of a project not queried for this long stop counting
     in_flight_stale_seconds = 3600.0
@@ -398,12 +516,31 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
                 result = super(DSProdCrabJobManager, self).query(
                     proj_dir, job_ids=job_ids, *args, **kwargs
                 )
+            except CrabTaskRefused as exc:
+                # terminal: retrying the query, and waiting between attempts, can only repeat it
+                return self._refused(exc, proj_dir, job_ids)
+            except CrabTaskNotScheduledYet as exc:
+                # not an error at all, so neither the delay nor the unreadable count applies
+                return self._not_scheduled_yet(exc, proj_dir, job_ids)
             except Exception as exc:
+                # law raises before the response is parsed when the client exits non-zero, and the
+                # output it read is inside the message: a refusal must be recognised there too, or
+                # the retry storm this replaces comes back whenever crab reports a failing exit
+                state = self.server_state(str(exc))
+                if state in self.terminal_server_states:
+                    return self._refused(
+                        CrabTaskRefused(
+                            state, self.server_warnings(str(exc)), proj_dir
+                        ),
+                        proj_dir,
+                        job_ids,
+                    )
                 last_error = exc
                 if attempt < self.query_retries:
                     time.sleep(self.query_retry_delay)
                 continue
             self._unreadable.pop(proj_dir, None)
+            self._unscheduled.pop(proj_dir, None)
             self._apply_watchdog(result)
             self.harvest_site_stats(proj_dir, result)
             return result
@@ -419,10 +556,112 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             f"could not read the status of {os.path.basename(proj_dir)} "
             f"({n}/{self.max_unreadable_polls} consecutive), keeping its jobs pending: {last_error}"
         )
+        return self._all_pending(proj_dir, job_ids)
+
+    def _invalidate_site_cache(self):
+        """Drop the cached site list, so the next submission asks CRIC again."""
+        path = self.site_cache_path
+        if not path:
+            return
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            # the report says the list was dropped, so a failure to drop it must not be silent
+            print(f"could not drop the cached site list {path}: {exc}")
+
+    def _refusal_report(self, exc):
+        """Everything an operator needs to act, in one message.
+
+        The server names only the first site it objected to, so the list it was given matters as
+        much as the objection: a second bad name would otherwise surface one submission later.
+        """
+        lines = [
+            f"the CRAB server refused this submission ({exc.state}). It will never run, so its "
+            "jobs are reported failed and law will submit them as a new task.",
+            f"  project:  {exc.proj_dir}",
+        ]
+        for warning in exc.warnings or ["<the server gave no reason>"]:
+            lines.append(f"  server:   {warning}")
+        if self.site_cache_path:
+            lines.append(
+                f"  sites:    computed from {self.site_cache_path}, now dropped so the next "
+                "submission re-reads CRIC"
+            )
+        lines.append(
+            "  check:    the whitelist must contain only CMS Processing Site Names -- CRIC "
+            "'?json&preset=site-names', rows with type 'psn'"
+        )
+        return "\n".join(lines)
+
+    def _all_pending(self, proj_dir, job_ids):
+        """Every job of the project reported pending -- what law does for a task with no jobs yet."""
         if job_ids is None:
             job_ids = self._job_ids_from_proj_dir(proj_dir)
         return {
             job_id: self.job_status_dict(job_id=job_id, status=self.PENDING)
+            for job_id in job_ids
+        }
+
+    def _not_scheduled_yet(self, exc, proj_dir, job_ids):
+        """A task the server has accepted but not handed to a scheduler: its jobs are pending.
+
+        Not an error, so neither the retry delay nor `max_unreadable_polls` applies -- but not
+        free either. The wait is repeated in the log while it lasts and bounded, because a task
+        that never leaves this status would otherwise stall the production in silence, which is
+        the failure this class exists to prevent.
+        """
+        self._unreadable.pop(proj_dir, None)
+        n = self._unscheduled.get(proj_dir, 0) + 1
+        self._unscheduled[proj_dir] = n
+        if n > self.max_unscheduled_polls:
+            self.stop_reason = (
+                f"{os.path.basename(proj_dir)} has been {exc.state} for {n} consecutive polls "
+                "without reaching a scheduler. The CRAB server accepted it, so this is not a "
+                "configuration fault; the TaskWorker is the place to look."
+            )
+        elif n == 1 or n % self.unscheduled_report_every == 0:
+            print(
+                f"{os.path.basename(proj_dir)}: {exc} ({n} polls); its jobs stay pending"
+            )
+        return self._all_pending(proj_dir, job_ids)
+
+    def _note_once(self, key, message):
+        """Print `message` the first time `key` produces it: a status repeats every poll."""
+        if key not in self._noted:
+            self._noted.add(key)
+            print(message)
+
+    def _refused(self, exc, proj_dir, job_ids):
+        """Report the jobs of a refused task as failed, so law resubmits them as a new task.
+
+        `code` is left None on purpose, as for a watchdog verdict: `harvest_site_stats` charges a
+        site only for a failure carrying a job-level code, and a task the server never scheduled
+        ran nowhere. The error text is deliberately not law's "initially missing task outputs",
+        which `StopOnMassInitialRetryProxy` counts.
+        """
+        self._unreadable.pop(proj_dir, None)
+        self._refused_projects.add(proj_dir)
+        # the whitelist is computed from a cached site list, and a name CRAB does not know is the
+        # likeliest reason for a refusal, so the next submission must not reuse that cache
+        self._invalidate_site_cache()
+        self._note_once(("refused", proj_dir), self._refusal_report(exc))
+        if len(self._refused_projects) >= self.max_refused_submissions:
+            # recorded, not raised: `crab_poll_callback` is the one hook law lets an exception out
+            # of. The jobs are still reported failed below, so the state law sees stays consistent
+            # whichever way the run ends.
+            self.stop_reason = (
+                f"{len(self._refused_projects)} CRAB submissions have been refused by the server, "
+                "so the next one would be too: this is a configuration fault, not bad luck.\n"
+                + self._refusal_report(exc)
+            )
+        if job_ids is None:
+            job_ids = self._job_ids_from_proj_dir(proj_dir)
+        return {
+            job_id: self.job_status_dict(
+                job_id=job_id, status=self.FAILED, code=None, error=str(exc)
+            )
             for job_id in job_ids
         }
 
@@ -541,40 +780,94 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
             f.writelines(new_lines)
 
 
-#: CRIC's site table — the same source CRAB validates a whitelist against
-_CRIC_URL = "https://cms-cric.cern.ch/api/cms/site/query/?json"
+#: CRIC's site table, asked the way CRAB asks it. `preset=site-names` with `type == "psn"` is
+#: literally `WMCore.Services.CRIC.CRIC.getAllPSNs`, which the CRAB TaskWorker calls to validate a
+#: whitelist (`TaskWorker/Actions/SiteInfoResolver.py`).
+_CRIC_URL = "https://cms-cric.cern.ch/api/cms/site/query/?json&preset=site-names"
 
 #: how long a cached site list is reused before CRIC is asked again
 _CRIC_CACHE_SECONDS = 24 * 3600
 
+#: a parse yielding fewer names than this is treated as a failed fetch. CRIC lists 119 processing
+#: sites, so this cannot be reached by sites going offline -- only by the payload changing shape,
+#: which would otherwise shrink the whitelist silently instead of raising.
+_CRIC_MIN_SITES = 50
+
+
+def _parse_cric_sites(payload):
+    """Processing site names out of a `preset=site-names` payload.
+
+    The preset answers `{"desc": {"columns": [...]}, "result": [[...], ...]}` -- rows are lists,
+    not objects -- so the columns are read by name: their order is CRIC's to change.
+    """
+    columns = (payload or {}).get("desc", {}).get("columns") or []
+    rows = (payload or {}).get("result") or []
+    if not columns or not isinstance(rows, list):
+        return []
+    entries = [
+        dict(zip(columns, row)) for row in rows if isinstance(row, (list, tuple))
+    ]
+    return sorted(
+        {e["alias"] for e in entries if e.get("type") == "psn" and e.get("alias")}
+    )
+
+
+def _checked(sites, source):
+    """`sites`, if it is long enough to be the real site list.
+
+    Applied to every path out of `processing_sites`, cache included: a short list is not a small
+    grid but a payload that changed shape, and it shrinks the whitelist without any error --
+    `resolve_whitelist` only objects when a blacklist empties it completely.
+    """
+    n = len(sites) if isinstance(sites, list) else 0
+    if n < _CRIC_MIN_SITES:
+        raise RuntimeError(
+            f"only {n} processing sites from {source}; expected at least "
+            f"{_CRIC_MIN_SITES}, so the site pool would be silently shrunk"
+        )
+    return sites
+
 
 def processing_sites(cache_path=None, url=_CRIC_URL, timeout=60):
-    """CMS site names that actually run jobs, newest-first from CRIC, cached on disk.
+    """CMS Processing Site Names, from CRIC, cached on disk.
 
-    `/cvmfs/cms.cern.ch/SITECONF` cannot be used for this: it also lists storage endpoints such as
-    `T1_US_FNAL_Disk` and `T3_CH_CERNBOX`, and a whitelist naming one gets the task refused --
-    "A site name T1_US_FNAL_Disk that user specified is not in the list of known CMS Processing
-    Site Names". CRIC marks the difference: a site that runs jobs has `computeunits`.
+    These are the names a `Site.whitelist` may contain. Any other name -- a storage endpoint such
+    as `T1_US_FNAL_Disk`, or a compute resource CRAB does not treat as a processing site, such as
+    `T3_CH_CERN_HelixNebula_REHA` -- makes the CRAB server refuse the whole task with "A site name
+    ... is not in the list of known CMS Processing Site Names", which is terminal.
+
+    An earlier version asked CRIC for every site carrying `computeunits`, reasoning that those are
+    the ones that run jobs. They are not the same set: measured on 2026-09-13 it admitted three
+    names that are not processing sites -- one of which refused a 36000-branch production -- while
+    omitting 39 that are.
     """
-    if cache_path and os.path.exists(cache_path):
-        if time.time() - os.path.getmtime(cache_path) < _CRIC_CACHE_SECONDS:
-            try:
-                with open(cache_path) as f:
-                    return json.load(f)
-            except (OSError, ValueError):
-                pass
+    try:
+        fresh = cache_path and (
+            time.time() - os.path.getmtime(cache_path) < _CRIC_CACHE_SECONDS
+        )
+    except OSError:  # removed underneath, e.g. by a refusal dropping it
+        fresh = False
+    if fresh:
+        try:
+            with open(cache_path) as f:
+                return _checked(json.load(f), cache_path)
+        except (OSError, ValueError, RuntimeError):
+            pass
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
-            payload = json.load(response)
+            sites = _checked(_parse_cric_sites(json.load(response)), url)
     except Exception as exc:
         if cache_path and os.path.exists(cache_path):
-            with open(cache_path) as f:  # stale is better than nothing
-                return json.load(f)
+            age_h = (time.time() - os.path.getmtime(cache_path)) / 3600.0
+            # announced, never silent: this is the path that resubmits yesterday's list, and a
+            # list that is wrong is exactly what gets a submission refused
+            print(
+                f"could not read the CMS site list from {url} ({exc}); falling back to "
+                f"{cache_path}, written {age_h:.1f} h ago"
+            )
+            with open(cache_path) as f:
+                return _checked(json.load(f), cache_path)
         raise RuntimeError(f"could not read the CMS site list from {url}: {exc}")
-    entries = payload.values() if isinstance(payload, dict) else payload
-    sites = sorted(
-        e["name"] for e in entries if e.get("name") and e.get("computeunits")
-    )
     if cache_path:
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -909,6 +1202,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     #: lazily-built, throttled `kinit -R` used while polling (see crab_poll_callback)
     _crab_kerberos_update = None
 
+    #: the job manager of this run, set by `crab_create_job_manager`
+    _dsprod_job_manager = None
+
     #: code tarball shipped to the workers, built once per law process (see _code_tarball)
     _code_tarball_path = None
 
@@ -1034,6 +1330,15 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return False
 
     def crab_poll_callback(self, poll_data):
+        # The one hook the poll loop calls outside its own error handling, so the one place a
+        # condition found while querying can actually end the run: law queries through a thread
+        # pool and turns an exception there into the result, which would be counted as an
+        # unreadable poll and nothing more. It runs after law's `finished` break, which only
+        # matters if `acceptance` is ever lowered from 1.0: with it at 1.0 a poll that refuses a
+        # task counts those jobs failed, so that poll can never be the finishing one.
+        manager = self._dsprod_job_manager
+        if manager is not None and manager.stop_reason:
+            raise RuntimeError(manager.stop_reason)
         # a large CRAB production polls for days, while law keeps writing its job status files to
         # a work area whose storage authenticates every access — renew the Kerberos ticket as the
         # HTCondor backend does
@@ -1115,6 +1420,15 @@ class CrabWorkflow(law.cms.CrabWorkflow):
             )
         return self._site_stats_obj
 
+    def site_cache_path(self):
+        """Where the CRIC site list is cached.
+
+        Deliberately not the old `cms_sites.json`: that file holds a list built by a different rule
+        (see `processing_sites`), and reusing it would keep a refused submission refused for the
+        whole cache lifetime after the rule was corrected.
+        """
+        return os.path.join(self.ana_data_path(), "cms_psn_sites.json")
+
     def crab_job_manager_cls(self):
         return DSProdCrabJobManager
 
@@ -1133,6 +1447,9 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         manager = super().crab_create_job_manager(**kwargs)
         manager.site_stats = self.site_stats()
         manager.watchdog = self.job_watchdog()
+        manager.site_cache_path = self.site_cache_path()
+        # kept so `crab_poll_callback` can see what the manager found while querying
+        self._dsprod_job_manager = manager
         try:
             manager.cmssw_env
         except Exception as exc:
@@ -1245,7 +1562,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         sites = resolve_whitelist(
             whitelist or _CRAB_ALL_SITES,
             blacklist,
-            processing_sites(os.path.join(self.ana_data_path(), "cms_sites.json")),
+            processing_sites(self.site_cache_path()),
         )
         config.crab.Site.whitelist = [str(s) for s in sites]
         if blacklist:
