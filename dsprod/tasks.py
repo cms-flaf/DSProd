@@ -1580,7 +1580,7 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
                 f.write(f"{written} written, {skipped} present, {len(seeds)} seeds\n")
 
 
-class PruneProducedRecords(Task, law.LocalWorkflow):
+class PruneProducedRecords(Task):
     """Delete the `produced/` records of seeds whose nano file is gone and unaccounted for.
 
     A record says a seed's nano file exists, and `NanoMergeTask` trusts it: that is what lets the
@@ -1601,7 +1601,14 @@ class PruneProducedRecords(Task, law.LocalWorkflow):
       * a staged nano file accounts for its own seed.
 
     It reports by default and deletes only with `--prune`, because the cost of a wrong deletion is
-    a seed re-produced from scratch. One branch per (era, point, version), as for the backfill.
+    a seed re-produced from scratch. Deliberately NOT a workflow, unlike the backfill: law's local
+    workflow yields its branches as dynamic dependencies, luigi re-runs the workflow once they
+    finish and re-checks each branch, so a task that must stay re-runnable -- `complete` always
+    False -- is scheduled again on every pass and never ends. A live production hit exactly that,
+    wave after wave, and an in-memory "already checked" flag cannot fix it either, because luigi
+    runs each branch in its own process. A plain task is run once and marked done whatever its
+    completeness says, and the next `law run` checks again. The work is remote listings, so it is
+    parallelised with threads (`--threads`) rather than with luigi workers.
     """
 
     prune = luigi.BoolParameter(
@@ -1620,31 +1627,55 @@ class PruneProducedRecords(Task, law.LocalWorkflow):
         description="records to delete at once; each one is a remote round trip",
     )
 
-    def create_branch_map(self):
-        branches = {}
-        bid = 0
-        for era in self.prod_eras:
-            for pi, _ in enumerate(self.prod_points):
-                for version in self.era_nano_versions(era):
-                    branches[bid] = (era, pi, version)
-                    bid += 1
-        return branches
+    threads = luigi.IntParameter(
+        default=8,
+        significant=False,
+        description="(era, point, version) units to check at once; the work is remote listings, "
+        "so this is latency-bound",
+    )
 
     def complete(self):
         """Never done: records go stale again, and a repair that refuses to re-run is a trap.
 
-        This is the *branch* task's answer. law forwards `complete` from a workflow to its proxy
-        (`law.task.proxy.get_proxy_attribute`), which asks `workflow_complete` instead, so both
-        are needed: overriding this one alone leaves the workflow reporting itself complete and
-        the run doing nothing.
+        Safe here only because this is a plain task -- see the class docstring for what happened
+        when it was a workflow. luigi marks a task done after running it unless
+        `check_complete_on_run` is set, which it is not.
         """
-        return False
-
-    def workflow_complete(self):
         return False
 
     def output(self):
         return []
+
+    def run(self):
+        units = [
+            (era, pi, version)
+            for era in self.prod_eras
+            for pi, _ in enumerate(self.prod_points)
+            for version in self.era_nano_versions(era)
+        ]
+        failures = []
+
+        def check(unit):
+            try:
+                self._check_and_prune(*unit)
+            except Exception as exc:
+                # every unit is reported before any of them stops the run: an operator repairing a
+                # production wants the whole picture, not the first point that would not list
+                failures.append((unit, exc))
+
+        with ThreadPoolExecutor(max_workers=int(self.threads)) as pool:
+            list(pool.map(check, units))
+
+        if failures:
+            shown = "; ".join(
+                f"{era}/{self.process.point_name(self.prod_points[pi])}/{version}: {exc}"
+                for (era, pi, version), exc in failures[:3]
+            )
+            more = f" ... and {len(failures) - 3} more" if len(failures) > 3 else ""
+            raise RuntimeError(
+                f"{len(failures)} of {len(units)} (era, point, version) could not be checked, so "
+                f"nothing was pruned for them: {shown}{more}"
+            )
 
     @staticmethod
     def _names(dir_target):
@@ -1683,8 +1714,7 @@ class PruneProducedRecords(Task, law.LocalWorkflow):
                 return set()
             raise
 
-    def run(self):
-        era, pi, version = self.branch_data
+    def _check_and_prune(self, era, pi, version):
         point = self.prod_points[pi]
         name = self.process.point_name(point)
         fpm = int(self.prod_setup.get("files_per_merge", 20))

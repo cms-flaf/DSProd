@@ -279,8 +279,8 @@ this merge group are gone`. Three groups of the Run3_2022EE production sat like 
 2026-09-15, each missing exactly one file of fifty.
 
 ```sh
-law run PruneProducedRecords --setup <setup> --eras Run3_2022EE --workflow local --workers 8
-law run PruneProducedRecords --setup <setup> --eras Run3_2022EE --workflow local --prune
+law run PruneProducedRecords --setup <setup> --eras Run3_2022EE
+law run PruneProducedRecords --setup <setup> --eras Run3_2022EE --prune
 ```
 
 Without `--prune` it only reports, because the cost of a wrong deletion is a seed produced again
@@ -300,7 +300,14 @@ branch below it, climbing when it has to: before a production's first merge ther
 tree at all, so the point's directory and the era's above it are both missing and the answer comes
 from higher up. And a point whose stale share exceeds
 `--max-stale-fraction` (0.5) is reported as a storage or configuration fault rather than pruned.
-The task never reports itself complete — records can go stale again tomorrow.
+
+The task never reports itself complete — records can go stale again tomorrow — and it is a plain
+task rather than a workflow for that reason. A law local workflow yields its branches as dynamic
+dependencies and luigi re-runs the workflow once they finish, re-checking each branch, so a branch
+that is never complete is scheduled again on every pass and the run never ends; a live production
+hit exactly that. A plain task is run once and marked done whatever its completeness says. The work
+is remote listings, so the (era, point, version) units are checked `--threads` at a time (8) instead
+of by luigi workers, and every unit is reported before an unreadable one stops the run.
 
 !!! warning "Not while merges of the same era are in flight"
     A merge uploads its merged file and only then deletes the staged inputs it consumed, and this
