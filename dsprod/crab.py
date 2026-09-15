@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import ssl
 import subprocess
 import threading
 import time
@@ -224,6 +225,85 @@ def _verify_code_tarball(path, expected):
         )
 
 
+#: the payload's own exception in a CRAB job's stdout. CMSSW's wrapper prefixes the payload stream
+#: with "== CMSSW:", and the LAST such line is the one that ended the job: a log also carries
+#: harmless earlier ones, e.g. the ImportError of a probe that imports FWCore before the release is
+#: set up.
+_payload_error_cre = re.compile(
+    r"^(?:==\s*CMSSW:\s*)?((?:\w+\.)*\w*(?:Error|Exception)):\s*(\S.*)$"
+)
+
+#: how much of one error line is printed
+_payload_error_chars = 600
+
+#: where the grid CAs live when a host has them; the schedd's certificate may need them
+_grid_ca_path = "/etc/grid-security/certificates"
+
+#: how much of a job's stdout is kept while looking for the payload's own error. These run to
+#: ~150 kB; the cap is what a runaway one cannot exceed.
+_max_log_bytes = 4 * 1024 * 1024
+
+
+def payload_error(text):
+    """The last exception line of a job's stdout, trimmed to one line, or None."""
+    found = None
+    for line in text.splitlines():
+        match = _payload_error_cre.match(line.strip())
+        if match:
+            found = f"{match.group(1)}: {match.group(2)}"
+    if found and len(found) > _payload_error_chars:
+        found = found[:_payload_error_chars] + " ..."
+    return found
+
+
+def fetch_job_stdout(url, max_bytes=_max_log_bytes, timeout=30.0, deadline=60.0):
+    """A CRAB job's stdout from the scheduler, read with the run's own grid proxy.
+
+    The schedd serves it over HTTPS with client-certificate authentication -- 401 without one --
+    and the proxy the submission already needs is that certificate.
+
+    Only the *tail* is wanted: the exception that ended the job is at the end. It is asked for with
+    a range request, and both the bytes and the wall clock are bounded, because this runs inside a
+    poll: law's `get_async_result_silent` waits on the query without a timeout of its own, so a
+    job whose stdout runs to gigabytes -- the very case a tail is for -- would otherwise hold up
+    the status of every project of the production for as long as the download takes. `timeout` is
+    per socket operation and does not bound a slow, steady transfer; `deadline` does.
+    """
+    proxy = os.environ.get("X509_USER_PROXY", "")
+    if not proxy or not os.path.exists(proxy):
+        raise RuntimeError("no X509_USER_PROXY to authenticate with")
+    context = ssl.create_default_context()
+    if os.path.isdir(_grid_ca_path):
+        context.load_verify_locations(capath=_grid_ca_path)
+    context.load_cert_chain(proxy, proxy)
+    request = urllib.request.Request(url, headers={"Range": f"bytes=-{int(max_bytes)}"})
+    started = time.monotonic()
+    chunks, size, read = [], 0, 0
+    with urllib.request.urlopen(request, context=context, timeout=timeout) as response:
+        ranged = response.status == 206
+        while True:
+            chunk = response.read(64 * 1024)
+            if not chunk:
+                break
+            read += len(chunk)
+            chunks.append(chunk)
+            size += len(chunk)
+            while size > max_bytes and len(chunks) > 1:
+                size -= len(chunks.pop(0))
+            # A ranged response is already only the tail, so its bytes need no cap -- but its
+            # time does: `timeout` bounds one socket operation, not a transfer that trickles, and
+            # this is holding the poll of every project either way. Without a range the whole file
+            # is arriving from the front, so the bytes are bounded too.
+            elapsed = time.monotonic() - started
+            if elapsed > deadline or (not ranged and read > 8 * max_bytes):
+                raise RuntimeError(
+                    f"stdout is still arriving after {read // (1024 * 1024)} MB and "
+                    f"{elapsed:.0f} s"
+                    + ("" if ranged else ", and the server would not send just its end")
+                )
+    return b"".join(chunks).decode("utf-8", "replace")
+
+
 class CrabTaskRefused(Exception):
     """A task the CRAB server will never run, carrying the reason it gave.
 
@@ -275,6 +355,14 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
     #: consecutive unreadable polls of one task that are tolerated before raising
     max_unreadable_polls = 10
 
+    #: freshly failed jobs whose stdout is read for the payload's own error, per poll. A wave that
+    #: fails by the hundred fails for a handful of reasons, and one line each is what is wanted --
+    #: not one HTTP fetch per job while the poll waits.
+    max_failure_reports = 5
+
+    #: how much of a job's stdout is kept while looking for its error
+    max_log_bytes = _max_log_bytes
+
     def __init__(self, *args, **kwargs):
         super(DSProdCrabJobManager, self).__init__(*args, **kwargs)
         #: proj_dir -> number of consecutive polls whose response could not be read
@@ -294,6 +382,9 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         #: into the *result*, so the raise would be counted as one more unreadable poll while the
         #: refused task's jobs stayed unfailed and every other project lost that poll's status.
         self.stop_reason = None
+        #: log URLs whose payload error was already printed -- the URL carries the attempt, so a
+        #: job that fails again is reported again while a poll that repeats is not
+        self._reported_logs = set()
         #: job ids already recorded, and the in-flight counts per project
         self._stats_seen = set()
         self._stats_lock = threading.Lock()
@@ -526,6 +617,67 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             self.site_stats.set_in_flight(combined)
             self.site_stats.save()
 
+    def report_failures(self, result):
+        """Print why each freshly failed job failed, in its payload's own words.
+
+        CRAB's exit code is a label rather than a diagnosis: 4197 failures of one production all
+        carried exit 5, "Error while running CMSSW", and law repeats that. What actually says what
+        happened is the exception DSProd's own payload raised -- it names the file, the seed and
+        often the repair -- and it sits in the job's stdout on the schedd, which nothing read. Three
+        merge jobs that failed on every resubmission (2026-09-15) were diagnosed only by finding
+        the scheduler's web directory by hand. law already records the URL of that stdout in
+        `extra`, and the driver holds the proxy it needs, so the driver fetches it.
+
+        Best effort by construction: a diagnostic that raised, or that made a poll wait on a slow
+        web server, would cost more than the message is worth. What it must not do is fail quietly
+        -- when the stdout cannot be read or carries no exception, that is said, once per attempt.
+        """
+        failures = [
+            (job_id, data)
+            for job_id, data in (result or {}).items()
+            if isinstance(data, dict) and data.get("status") == self.FAILED
+            # as in `harvest_site_stats`: without a job-level code this is law's own bookkeeping
+            # or a kill, and there is no payload stdout to read
+            and data.get("code") is not None
+            and (data.get("extra") or {}).get("log_file")
+            and (data["extra"]["log_file"] not in self._reported_logs)
+        ]
+        if not failures:
+            return
+        shown = failures[: self.max_failure_reports]
+        for job_id, data in shown:
+            url = data["extra"]["log_file"]
+            self._reported_logs.add(url)
+            try:
+                site = (data.get("extra") or {}).get("site_history") or []
+                where = f" at {site[-1]}" if site else ""
+                print(
+                    f"crab job {job_id.crab_num} of {os.path.basename(str(job_id.proj_dir))} "
+                    f"failed{where} with exit code {data.get('code')}: "
+                    f"{self._payload_error(url)}"
+                )
+            except Exception as exc:
+                # a diagnostic that raised here would cost the whole poll -- law turns an
+                # exception from `query` into the poll's *result* -- to print one line
+                print(f"could not report a failed job ({exc}); its stdout is at {url}")
+        if len(failures) > len(shown):
+            print(
+                f"... and {len(failures) - len(shown)} more failed job(s) this poll whose reason "
+                f"was not fetched (max_failure_reports={self.max_failure_reports}); their stdout "
+                "is linked from the job data"
+            )
+
+    def _payload_error(self, url):
+        """The last exception line of a job's stdout, or why it could not be read."""
+        try:
+            text = fetch_job_stdout(url, max_bytes=self.max_log_bytes)
+        except Exception as exc:
+            return f"could not read its stdout ({exc}); see {url}"
+        error = payload_error(text)
+        if not error:
+            return f"its stdout carries no exception; see {url}"
+        return error
+
     def query(self, proj_dir, job_ids=None, *args, **kwargs):
         proj_dir = str(proj_dir)
         last_error = None
@@ -561,6 +713,7 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             self._unscheduled.pop(proj_dir, None)
             self._apply_watchdog(result)
             self.harvest_site_stats(proj_dir, result)
+            self.report_failures(result)
             return result
 
         n = self._unreadable.get(proj_dir, 0) + 1

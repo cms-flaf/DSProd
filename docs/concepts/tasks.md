@@ -268,6 +268,48 @@ listings rather than a stat per seed, and uploads its records `--upload-threads`
 the migration takes hours instead of minutes. Raise `--workers` and `--upload-threads` on a slow
 endpoint — the work is all latency, not CPU.
 
+### `PruneProducedRecords`
+
+The repair for the opposite drift: a `produced/` record whose staged nano file is **gone and
+unaccounted for**. A record is what the merge trusts — it is why a merge may delete the files it
+consumed without the next run reading a finished era as unproduced — so a staged file that
+disappears anyway (storage lost it, or a hand removed it) leaves a record no one can honour, and
+the only symptom is a merge group that fails on every attempt with `N of 50 staged nano files of
+this merge group are gone`. Three groups of the Run3_2022EE production sat like that on
+2026-09-15, each missing exactly one file of fifty.
+
+```sh
+law run PruneProducedRecords --setup <setup> --eras Run3_2022EE --workflow local --workers 8
+law run PruneProducedRecords --setup <setup> --eras Run3_2022EE --workflow local --prune
+```
+
+Without `--prune` it only reports, because the cost of a wrong deletion is a seed produced again
+from scratch; with it, the stale records are deleted and those seeds are produced again on the next
+`RunProd`. A record is stale only when **nothing** accounts for its seed:
+
+- a merged file covering the seed's group accounts for it — the normal state after a merge, when
+  every record of the group has no staged file and all of them are healthy;
+- a staged nano file accounts for its own seed.
+
+Two rails, because the blast radius of a mistake here is an era. A directory listing that *fails*
+stops the prune instead of reading as "nothing is staged", which would condemn every record of the
+point — note that `exists()` cannot be used for this, since DSProd's gfal interface answers it by
+listing the parent silently and so returns the same "no" for a blink as for an absence. Absence is
+established instead from the first *successful* listing of an ancestor that does not carry the
+branch below it, climbing when it has to: before a production's first merge there is no merged
+tree at all, so the point's directory and the era's above it are both missing and the answer comes
+from higher up. And a point whose stale share exceeds
+`--max-stale-fraction` (0.5) is reported as a storage or configuration fault rather than pruned.
+The task never reports itself complete — records can go stale again tomorrow.
+
+!!! warning "Not while merges of the same era are in flight"
+    A merge uploads its merged file and only then deletes the staged inputs it consumed, and this
+    task reads the staging tree before the merged one, so a group that merges underneath it is
+    still accounted for. What that does not cover is storage that has not yet made the new merged
+    file visible — FNAL EOS has shown read-after-write lag — which would read as "neither staged
+    nor merged". Run it when the era's merges are not running, and read the report before passing
+    `--prune`.
+
 ### `CollectGridpacks`
 
 The way back: it collects the gridpacks a setup **produced** into the local

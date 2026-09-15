@@ -60,6 +60,18 @@ breaks that order silently, and the symptom is a job killed on walltime or memor
 error. On CRAB the memory number is a kill threshold, not a reservation, so a request quietly
 lowered (or raised, which buys cores) is a dead branch.
 
+### `produced/` records are the completeness signal
+
+A seed's `produced/` record, not its nano file, is what says the seed ran: the merge deletes the
+staged files it consumed, so a production judged by files reads as entirely unproduced after a
+merge. Two rules follow, and code that breaks either is expensive rather than wrong-looking. A
+record must never be written before the file it describes is on storage, or a merge will trust a
+file that is not there. And deleting a record means re-producing that seed from scratch, so any
+code path that removes one must prove nothing accounts for it — a merged file covers its whole
+group, and a listing that *failed* is not an empty listing — which `exists()` cannot tell you,
+because the gfal interface answers it by listing the parent with `silent=True` and caches the
+negative.
+
 ### Registry and processes
 
 `dsprod/registry.py` and `dsprod/processes/` map a setup onto the steps that implement it. A

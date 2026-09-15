@@ -500,11 +500,34 @@ the driver watches nothing.
     cleanly leaves its flag behind instead, and that is caught as a stale one — which is the shape
     the incident this exists for actually had.
 
-### Debugging CRAB jobs
+### Why a job failed
 
-`crab status`/`crab getlog` re-delegate a MyProxy interactively when run without `--proxy`
-(DSProd always passes it, which is why a production run never renews the credential for you). To inspect a job without that,
-fetch its stdout directly from the task's web directory with your VOMS proxy — remember
-`--capath /etc/grid-security/certificates`, or curl returns HTTP 000. The
+CRAB's exit code is a label rather than a diagnosis: every one of the 4197 failures of one
+production carried exit 5, `Error while running CMSSW`, and law repeats exactly that next to the
+job id. What says what actually happened is the exception the payload raised, which lands in the
+job's stdout on the scheduler — and DSProd's payload errors are written to be read, naming the
+file, the seed and usually the repair.
+
+The driver therefore fetches that stdout for each newly failed job and prints its last exception:
+
+```
+crab job 66 of crab_NanoMergeTask_Run3_XHHbbWW_4fa198da failed at T2_CH_CERN with exit code 5:
+RuntimeError: 1 of 50 staged nano files of this merge group are gone -- seeds 45, e.g. ...
+```
+
+It is a diagnostic, so it stays out of the way: one fetch per failed *attempt* (a poll that repeats
+prints nothing new), at most `max_failure_reports` (5) per poll with the remainder counted, and a
+stdout that cannot be read or carries no exception says so rather than going quiet. Failures
+without a job-level exit code are skipped — those are law's own bookkeeping or a killed task, and
+have no payload output to read, the same rule the [site record](#failing-sites) uses.
+
+The fetch uses law's own `log_file` URL for the job, which the scheduler serves over HTTPS with
+client-certificate authentication; the run's VOMS proxy is that certificate.
+
+To look at a job by hand — for one that did not fail, or for the full log — fetch its stdout from
+the task's web directory with your proxy, remembering `--capath /etc/grid-security/certificates`
+or curl returns HTTP 000. `crab status`/`crab getlog` re-delegate a MyProxy interactively when run
+without `--proxy` (DSProd always passes it, which is why a production run never renews the
+credential for you). The
 [CRAB backend module](https://github.com/cms-flaf/DSProd/blob/main/dsprod/crab.py) documents the
 details.

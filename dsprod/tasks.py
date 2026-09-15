@@ -264,6 +264,11 @@ def runprod_branches(eras, points):
     return out
 
 
+#: how far `PruneProducedRecords` climbs to establish that a directory is really absent; the
+#: deepest it asks about is `<products>/produced/nanoAOD_<version>/<era>/<point>`
+_absence_climb_limit = 5
+
+
 def merge_groups(seeds, files_per_merge):
     """Ordered (group index, seeds) pairs — the single source of NanoMergeTask's grouping.
 
@@ -1387,6 +1392,32 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
                 "the odd seeds at the setup's size, or delete their `produced/` records."
             )
 
+    def _check_staged_inputs(self, era, point, version, seeds):
+        """The group's staged nano files, or an error naming every seed that has to run again.
+
+        Their `produced/` records are what the `RunProd` requirement provides, and a record is
+        trusted: it is what lets a merge delete the files it consumed. So a staged file that is
+        gone while its record stands is unrecoverable here, and the operator's next move is to
+        re-produce exactly those seeds -- which is why they are all named. A message quoting one
+        of three sends them back to the job logs for the other two (2026-09-15).
+        """
+        staged = [self.staged_nano_target(era, point, version, seed) for seed in seeds]
+        missing = [(seed, t) for seed, t in zip(seeds, staged) if not t.exists()]
+        if missing:
+            shown = ", ".join(str(seed) for seed, _ in missing[:12])
+            more = f" and {len(missing) - 12} more" if len(missing) > 12 else ""
+            raise RuntimeError(
+                f"{len(missing)} of {len(staged)} staged nano files of this merge group are "
+                f"gone -- seeds {shown}{more}, e.g. {missing[0][1].uri()} -- although their "
+                "seeds are recorded as produced. Either this group was merged before and its "
+                "merged file was removed, or the storage lost them; either way those seeds have "
+                "to run again, which means deleting their `produced/` records (e.g. "
+                f"{self.produced_nano_target(era, point, version, missing[0][0]).uri()}). "
+                "`law run PruneProducedRecords` finds and deletes exactly such records for a "
+                "whole production."
+            )
+        return staged
+
     @with_heartbeat
     def run(self):
         era, pi, version, _, seeds = self.branch_data
@@ -1395,16 +1426,7 @@ class NanoMergeTask(Task, HTCondorWorkflow, CrabWorkflow, law.LocalWorkflow):
         )
         # the RunProd requirement provides the `produced/` records, not the files themselves
         point = self.prod_points[pi]
-        staged = [self.staged_nano_target(era, point, version, seed) for seed in seeds]
-        missing = [t for t in staged if not t.exists()]
-        if missing:
-            raise RuntimeError(
-                f"{len(missing)} of {len(staged)} staged nano files of this merge group are "
-                f"gone (first: {missing[0].uri()}), although their seeds are recorded as "
-                "produced. Either this group was merged before and its merged file was "
-                "removed -- delete the seeds' `produced/` records to regenerate them -- or "
-                "the storage lost them."
-            )
+        staged = self._check_staged_inputs(era, point, version, seeds)
         self._check_contracted_inputs(version, seeds)
         work_dir, is_tmp = self.law_job_home()
         try:
@@ -1556,3 +1578,182 @@ class BackfillProducedRecords(Task, law.LocalWorkflow):
         with self.output().localize("w") as out_local:
             with open(out_local.abspath, "w") as f:
                 f.write(f"{written} written, {skipped} present, {len(seeds)} seeds\n")
+
+
+class PruneProducedRecords(Task, law.LocalWorkflow):
+    """Delete the `produced/` records of seeds whose nano file is gone and unaccounted for.
+
+    A record says a seed's nano file exists, and `NanoMergeTask` trusts it: that is what lets the
+    merge delete the staged files it consumed without the next run reading the whole era as
+    unproduced. When a staged file goes missing anyway -- storage lost it, or a hand removed it --
+    the record outlives it, and the only symptom is a merge that fails on every attempt with
+    "N of 50 staged nano files of this merge group are gone". Three groups of the Run3_2022EE
+    production sat like that on 2026-09-15, each missing exactly one file of fifty.
+
+    The repair is to make those seeds run again, i.e. to delete their records; doing it by hand
+    means composing remote paths from a CRAB log. This finds them instead, for a whole production
+    at once, so the next merge is not the thing that discovers the second one.
+
+    A record is stale only when **nothing** accounts for its seed:
+
+      * a merged file covering the seed's group accounts for it -- this is the normal state after
+        a merge, and by far the most common one;
+      * a staged nano file accounts for its own seed.
+
+    It reports by default and deletes only with `--prune`, because the cost of a wrong deletion is
+    a seed re-produced from scratch. One branch per (era, point, version), as for the backfill.
+    """
+
+    prune = luigi.BoolParameter(
+        default=False,
+        description="delete the stale records; without it they are only reported",
+    )
+    max_stale_fraction = luigi.FloatParameter(
+        default=0.5,
+        significant=False,
+        description="refuse to prune a point whose stale share exceeds this -- such a share is "
+        "a storage or configuration fault rather than lost files",
+    )
+    remove_threads = luigi.IntParameter(
+        default=16,
+        significant=False,
+        description="records to delete at once; each one is a remote round trip",
+    )
+
+    def create_branch_map(self):
+        branches = {}
+        bid = 0
+        for era in self.prod_eras:
+            for pi, _ in enumerate(self.prod_points):
+                for version in self.era_nano_versions(era):
+                    branches[bid] = (era, pi, version)
+                    bid += 1
+        return branches
+
+    def complete(self):
+        """Never done: records go stale again, and a repair that refuses to re-run is a trap.
+
+        This is the *branch* task's answer. law forwards `complete` from a workflow to its proxy
+        (`law.task.proxy.get_proxy_attribute`), which asks `workflow_complete` instead, so both
+        are needed: overriding this one alone leaves the workflow reporting itself complete and
+        the run doing nothing.
+        """
+        return False
+
+    def workflow_complete(self):
+        return False
+
+    def output(self):
+        return []
+
+    @staticmethod
+    def _names(dir_target):
+        """File names in a remote directory, telling "not there" from "could not be read".
+
+        `BackfillProducedRecords` may read an unreadable directory as empty -- the worst that does
+        is write a record that is already there. Here the same shortcut would read "nothing is
+        staged and nothing is merged" out of one failed listing and delete every record of the
+        point, i.e. re-produce an era because a storage endpoint blinked.
+
+        `exists()` cannot be asked, and that is the trap: the gfal interface answers it by listing
+        the *parent* with `silent=True` (`dsprod/law_gfal.py`), which turns a failed `gfal-ls` into
+        an empty listing, caches the negative and marks the ancestors absent -- a blink and an
+        absence are then the same answer. `listdir()` raises instead, and the one piece of evidence
+        for absence that cannot be a blink is a *successful* listing of the parent that does not
+        carry this directory. When even that cannot be read, the error propagates: refusing to
+        prune costs another merge attempt, pruning wrongly costs an era.
+        """
+        try:
+            return set(dir_target.listdir())
+        except Exception:
+            # Climbing, because a young production has no merged tree at all: the point's
+            # directory is missing and so is the era's above it. Absence is established by the
+            # first ancestor that answers and does not carry the branch below it; an ancestor that
+            # cannot be read is evidence of nothing, so the climb passes over it and the original
+            # error is raised when nothing answers at all.
+            child, parent, climbed = dir_target, dir_target.parent, 0
+            while parent is not None and climbed < _absence_climb_limit:
+                try:
+                    names = set(parent.listdir())
+                except Exception:
+                    child, parent, climbed = parent, parent.parent, climbed + 1
+                    continue
+                if child.basename in names:
+                    raise
+                return set()
+            raise
+
+    def run(self):
+        era, pi, version = self.branch_data
+        point = self.prod_points[pi]
+        name = self.process.point_name(point)
+        fpm = int(self.prod_setup.get("files_per_merge", 20))
+        seeds = list(range(1, point.n_jobs(era) + 1))
+
+        # Three listings rather than a stat per seed, as in the backfill: an era carries 16000+
+        # seeds per nano version and a remote round trip each runs for hours.
+        #
+        # The ORDER matters, and staged before merged is the safe one. A merge uploads its merged
+        # file and only then deletes the staged inputs it consumed, so a group that merges while
+        # this is listing can be missed by the staged listing -- but its merged file was already
+        # there when the merged listing runs, and the seeds are accounted for. The reverse order
+        # would read both as absent and call the group stale.
+        have_records = self._names(
+            self.produced_nano_target(era, point, version, 1).parent
+        )
+        have_staged = self._names(
+            self.staged_nano_target(era, point, version, 1).parent
+        )
+        have_merged = self._names(
+            self.merged_nano_target(era, point, version, 0).parent
+        )
+
+        merged_seeds = set()
+        for group, group_seeds in merge_groups(seeds, fpm):
+            if f"nano_{version}_{group}.root" in have_merged:
+                merged_seeds.update(group_seeds)
+
+        recorded = [s for s in seeds if f"nano_{version}_{s}.json" in have_records]
+        stale = [
+            s
+            for s in recorded
+            if s not in merged_seeds and f"nano_{version}_{s}.root" not in have_staged
+        ]
+        where = f"PruneProducedRecords[{era}/{name}/{version}]"
+        if not stale:
+            print(f"{where}: nothing stale among {len(recorded)} records")
+            return
+
+        shown = ", ".join(map(str, stale[:12]))
+        more = f" and {len(stale) - 12} more" if len(stale) > 12 else ""
+        fraction = len(stale) / len(recorded)
+        if fraction > float(self.max_stale_fraction):
+            raise RuntimeError(
+                f"{where}: {len(stale)} of {len(recorded)} records have neither a staged nor a "
+                f"merged file ({fraction:.0%}, above max_stale_fraction "
+                f"{float(self.max_stale_fraction):.0%}) -- seeds {shown}{more}. A share that "
+                "large is a storage or configuration fault, not lost files: check that the "
+                "staging area is readable and that this is the production you mean, then raise "
+                "--max-stale-fraction if the records really are all stale."
+            )
+        if not self.prune:
+            print(
+                f"{where}: {len(stale)} of {len(recorded)} records are stale -- seeds "
+                f"{shown}{more}. Re-run with --prune to delete them, after which those seeds "
+                "are produced again."
+            )
+            return
+
+        def drop(seed):
+            # `silent=False`, or a removal that failed is simply reported as done: the target's
+            # default silences the gfal error and returns False, and an operator repairing a
+            # production during an incident would be told the records are gone, relaunch the
+            # merge, and meet the same failure again
+            self.produced_nano_target(era, point, version, seed).remove(silent=False)
+
+        with ThreadPoolExecutor(max_workers=self.remove_threads) as pool:
+            list(pool.map(drop, stale))
+        print(
+            f"{where}: {len(stale)} stale record(s) deleted -- seeds {shown}{more}. Those seeds "
+            "will be produced again on the next RunProd."
+        )
