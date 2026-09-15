@@ -116,7 +116,6 @@ def task(records=(), staged=(), merged=(), remove_fails=False, **attrs):
     point.n_jobs.return_value = attrs.pop("n_seeds", SEEDS)
 
     t = mock.Mock()
-    t.branch_data = (ERA, 0, VERSION)
     t.prod_points = [point]
     t.prod_setup = {"files_per_merge": PER_MERGE}
     t.process.point_name.return_value = "P"
@@ -137,8 +136,9 @@ def task(records=(), staged=(), merged=(), remove_fails=False, **attrs):
 
 
 def run(t):
+    """One (era, point, version) unit. `run()` itself only fans these out over threads."""
     with mock.patch("builtins.print") as printed:
-        PruneProducedRecords.run(t)
+        PruneProducedRecords._check_and_prune(t, ERA, 0, VERSION)
     return " ".join(str(c.args[0]) for c in printed.call_args_list)
 
 
@@ -366,12 +366,13 @@ class AndTheBlastRadiusIsHeldDown(unittest.TestCase):
 
 
 class ItNeverReportsItselfDone(unittest.TestCase):
-    """Records go stale again tomorrow, so the repair must be runnable again.
+    """Records go stale again tomorrow, so the check must repeat -- and it must also terminate.
 
-    Asserting this on the class alone is what let the first version ship broken: law forwards
-    `complete` from a workflow task to its proxy, so the override applied to branch tasks only and
-    `law run PruneProducedRecords` reported "1 complete ones were encountered" and ran nothing.
-    These build the task the way law does and ask it, rather than calling the method.
+    It is a plain task, not a workflow, for exactly that reason: law's local workflow yields its
+    branches as dynamic dependencies and luigi re-runs the workflow once they finish, re-checking
+    each branch, so a never-complete branch is rescheduled on every pass. A live production hit it
+    (2026-09-15) and ran wave after wave; an in-memory "already checked" flag does not help either,
+    since luigi runs each branch in its own process.
     """
 
     def task(self):
@@ -379,19 +380,22 @@ class ItNeverReportsItselfDone(unittest.TestCase):
         if not os.path.exists(setup):
             self.skipTest("models submodule not checked out")
         return PruneProducedRecords(
-            setup=setup,
-            eras=("Run3_2022EE",),
-            points=("*_M-250",),
-            workflow="local",
+            setup=setup, eras=("Run3_2022EE",), points=("*_M-250",)
         )
 
-    def test_the_workflow_is_never_complete(self):
-        workflow = self.task()
-        self.assertTrue(workflow.is_workflow())
-        self.assertFalse(workflow.complete())
+    def test_it_is_not_a_workflow(self):
+        self.assertNotIsInstance(self.task(), law.LocalWorkflow)
+        self.assertFalse(hasattr(self.task(), "branch_map"))
 
-    def test_a_branch_is_never_complete(self):
-        self.assertFalse(self.task().as_branch(0).complete())
+    def test_it_always_reports_itself_incomplete(self):
+        self.assertFalse(self.task().complete())
+
+    def test_luigi_marks_it_done_anyway_so_a_run_terminates(self):
+        """The property the loop depended on: luigi only re-checks `complete()` after `run()` when
+        `check_complete_on_run` is set, and it is not."""
+        from luigi.worker import worker as luigi_worker
+
+        self.assertFalse(luigi_worker().check_complete_on_run)
 
 
 if __name__ == "__main__":
