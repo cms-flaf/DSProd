@@ -55,6 +55,19 @@ DEFAULTS = {
     "quarantine_hours": 24.0,
     # the ceiling the doubling stops at -- 32 days
     "max_quarantine_hours": 768.0,
+    # A site that fails this many jobs inside `burst_minutes` is quarantined at once, without
+    # waiting for the 24 h rate to clear `min_failure_rate`. The rate test is slow against exactly
+    # the site that hurts most: a black hole fails in seconds, so it cycles through slots faster
+    # than any healthy site, and its own successes from earlier in the window keep the ratio down
+    # until they age out. Measured on 2026-09-13: T2_EE_Estonia's failures were visible from 07:00
+    # (77 ended-failed in that hour) and it was blacklisted at 09:52, ~2 h and several hundred
+    # jobs later. The burst test still has to pass the three relative checks above, so a fault of
+    # our own -- which fails everywhere at once -- cannot ban every site in a quarter of an hour.
+    # It reads `min_failure_rate` against a different denominator, though: only the jobs that
+    # ENDED inside the window, since a job still in flight carries no timestamp that could place
+    # it in a quarter of an hour. A very large value leaves only the rate test.
+    "burst_failures": 20,
+    "burst_minutes": 15.0,
     # outcomes older than this stop counting
     "window_hours": 24.0,
     # never quarantine more than this many sites at once
@@ -199,6 +212,42 @@ class SiteStats:
         n_fail = sum(1 for _, ok in events if not ok)
         return len(events) + self.in_flight.get(site, 0), n_fail
 
+    @staticmethod
+    def _ended_since(rec, since):
+        """(outcomes recorded since `since`, failures among them).
+
+        Deliberately without `in_flight`, unlike `_counts`: a burst is measured over what ended in
+        a short window, and a job still running was not necessarily sent inside it.
+        """
+        events = [e for e in rec["events"] if e[0] >= since]
+        return len(events), sum(1 for _, ok in events if not ok)
+
+    def _burst_baseline(self, site, since):
+        """(outcomes, failure rate) of every *other* site over the same window."""
+        n = n_fail = 0
+        for name, rec in self.sites.items():
+            if name == site:
+                continue
+            a, b = self._ended_since(rec, since)
+            n += a
+            n_fail += b
+        return n, ((n_fail / n) if n else 0.0)
+
+    def _is_burst(self, site, rec, now):
+        """Whether `site` has just failed a lot of jobs in a short time, and only it has."""
+        window = float(self.cfg["burst_minutes"]) * 60.0
+        since = max(now - window, float(rec["cleared_at"]))
+        n, n_fail = self._ended_since(rec, since)
+        if not n or n_fail < int(self.cfg["burst_failures"]):
+            return False
+        rate = n_fail / n
+        if rate < float(self.cfg["min_failure_rate"]):
+            return False
+        n_other, rate_other = self._burst_baseline(site, since)
+        if n_other < int(self.cfg["min_baseline_jobs"]):
+            return False
+        return rate >= float(self.cfg["relative_factor"]) * rate_other
+
     def _prune(self, now):
         cutoff = now - float(self.cfg["window_hours"]) * 3600.0
         for rec in self.sites.values():
@@ -252,17 +301,21 @@ class SiteStats:
         for site, rec in self.sites.items():
             if rec["quarantined_until"] > now:
                 continue
-            n, n_fail = self._counts(site, rec, since=rec["cleared_at"])
-            if not n or n_fail < int(self.cfg["min_failures"]):
-                continue
-            rate = n_fail / n
-            if rate < float(self.cfg["min_failure_rate"]):
-                continue
-            n_other, rate_other = self._baseline(site)
-            if n_other < int(self.cfg["min_baseline_jobs"]):
-                continue
-            if rate < float(self.cfg["relative_factor"]) * rate_other:
+            if not (self._is_burst(site, rec, now) or self._is_failing(site, rec)):
                 continue
             rec["quarantined_until"] = now + self._quarantine_seconds(rec)
             rec["quarantines"] += 1
             self._dirty = True
+
+    def _is_failing(self, site, rec):
+        """The standing test: most of what the site was sent, over the whole window, failed."""
+        n, n_fail = self._counts(site, rec, since=rec["cleared_at"])
+        if not n or n_fail < int(self.cfg["min_failures"]):
+            return False
+        rate = n_fail / n
+        if rate < float(self.cfg["min_failure_rate"]):
+            return False
+        n_other, rate_other = self._baseline(site)
+        if n_other < int(self.cfg["min_baseline_jobs"]):
+            return False
+        return rate >= float(self.cfg["relative_factor"]) * rate_other
