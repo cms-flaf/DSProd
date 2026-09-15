@@ -250,6 +250,50 @@ Three consequences to know about:
   gridpacks 10–19 — while seed 10 needs gridpack 0, whose absence the requirement then never
   noticed — and dropped the premix list of every era outside the range.
 
+### `ProductionTask`
+
+One command for a whole production: it produces, repairs what the storage lost, and merges.
+
+```sh
+law run ProductionTask --setup <setup> --eras Run3_2022EE --points "<pattern>"
+```
+
+It yields `RunProd`, then runs the `PruneProducedRecords` check, then yields `NanoMergeTask` — the
+three steps an operator otherwise runs by hand, in the order that makes the middle one worth having.
+A `produced/` record whose staged nano file has been lost is invisible until the merge of its group
+runs, and then that group fails on every attempt; checking before the merge turns each one into a
+seed that is simply produced again. If the check deletes anything, the pruned seeds go back through
+`RunProd` (only those, since only those are now incomplete) before the merge is submitted.
+
+`--backend` (`crab` by default, also `htcondor` or `local`) reaches both stages; the usual
+`--eras`, `--points`, `--nano-versions` and `--test` narrow the run as everywhere else. Completeness
+is the merged files themselves, so a finished production is a no-op and an interrupted one resumes.
+
+The repair here runs in **delete** mode, unlike the standalone task, which reports by default —
+there is no operator to read a report mid-run. `--max-repairs` (2) bounds it: each round produces
+the pruned seeds again, so a storage that keeps losing them would otherwise be answered with
+submission after submission, and the run stops with a message naming the count instead.
+`--max-repairs 0` skips the repair entirely. The count lives on the driver task, which luigi keeps
+as one instance only while it runs the task in the same process — so while a repair is allowed,
+`--workers` above one and `--worker-timeout` are **refused** with a message rather than left to
+degrade the bound silently. On `crab` and `htcondor` that costs nothing, since the batch system is
+the parallelism. On `--backend local` it does: there `--workers` is what runs branches in parallel
+([backends](backends.md#local)), so a large local production wants `--max-repairs 0 --workers n`
+and a `law run PruneProducedRecords` of its own before and after.
+
+When the bound does stop a run, the records that sweep deleted are already gone, so those seeds are
+simply unproduced: fix the storage and run the command again. And because the sweep follows the
+production stage immediately, a staged file that is written but not yet visible — remote writes can
+lag by seconds — would be read as lost and its seed produced once more. `RunProd` writes the staged
+file before its record, which makes that unlikely, and the cost if it happens is one job.
+
+!!! note "Why the repair runs *before* the merge, not after a failure"
+    luigi never re-runs a task whose dynamic dependency failed, so there is no point at which
+    "merge, and prune if it failed" could do the pruning — the generator simply never regains
+    control. A file lost after this has swept therefore still fails its merge branch; running the
+    same command again repairs it and finishes the production. The driver prints the payload's own
+    error for a failed job, so a merge that fails for some other reason says so directly.
+
 ### `BackfillProducedRecords`
 
 A migration for productions that ran before the `produced/` records existed, whose staged files

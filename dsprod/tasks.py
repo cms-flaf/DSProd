@@ -27,7 +27,9 @@ from dataclasses import replace
 import law
 import luigi
 import luigi.configuration
+import luigi.interface
 import luigi.task_register
+import luigi.worker
 import yaml
 
 from . import gridpack_store, registry, run_step
@@ -267,6 +269,20 @@ def runprod_branches(eras, points):
 #: how far `PruneProducedRecords` climbs to establish that a directory is really absent; the
 #: deepest it asks about is `<products>/produced/nanoAOD_<version>/<era>/<point>`
 _absence_climb_limit = 5
+
+
+def _parent_of(dir_target):
+    """The directory above `dir_target`, or None once there is none.
+
+    The file system's base is the top: asking a target at the base for its parent yields one with
+    an empty path, which law refuses to build ("when no target path is defined, is_tmp must be
+    set"). A climb looking for the first ancestor that answers must read that as "nowhere else to
+    ask", not as a failure.
+    """
+    try:
+        return dir_target.parent
+    except Exception:
+        return None
 
 
 def merge_groups(seeds, files_per_merge):
@@ -1634,6 +1650,10 @@ class PruneProducedRecords(Task):
         "so this is latency-bound",
     )
 
+    #: records deleted by the last `run()` of this instance, which is how `ProductionTask` learns
+    #: whether anything has to be produced again
+    n_pruned = 0
+
     def complete(self):
         """Never done: records go stale again, and a repair that refuses to re-run is a trap.
 
@@ -1653,11 +1673,11 @@ class PruneProducedRecords(Task):
             for pi, _ in enumerate(self.prod_points)
             for version in self.era_nano_versions(era)
         ]
-        failures = []
+        failures, dropped = [], []
 
         def check(unit):
             try:
-                self._check_and_prune(*unit)
+                dropped.append(self._check_and_prune(*unit))
             except Exception as exc:
                 # every unit is reported before any of them stops the run: an operator repairing a
                 # production wants the whole picture, not the first point that would not list
@@ -1665,6 +1685,7 @@ class PruneProducedRecords(Task):
 
         with ThreadPoolExecutor(max_workers=int(self.threads)) as pool:
             list(pool.map(check, units))
+        self.n_pruned = sum(dropped)
 
         if failures:
             shown = "; ".join(
@@ -1702,12 +1723,12 @@ class PruneProducedRecords(Task):
             # first ancestor that answers and does not carry the branch below it; an ancestor that
             # cannot be read is evidence of nothing, so the climb passes over it and the original
             # error is raised when nothing answers at all.
-            child, parent, climbed = dir_target, dir_target.parent, 0
+            child, parent, climbed = dir_target, _parent_of(dir_target), 0
             while parent is not None and climbed < _absence_climb_limit:
                 try:
                     names = set(parent.listdir())
                 except Exception:
-                    child, parent, climbed = parent, parent.parent, climbed + 1
+                    child, parent, climbed = parent, _parent_of(parent), climbed + 1
                     continue
                 if child.basename in names:
                     raise
@@ -1715,6 +1736,7 @@ class PruneProducedRecords(Task):
             raise
 
     def _check_and_prune(self, era, pi, version):
+        """One (era, point, version): how many records were deleted (none, unless `--prune`)."""
         point = self.prod_points[pi]
         name = self.process.point_name(point)
         fpm = int(self.prod_setup.get("files_per_merge", 20))
@@ -1752,7 +1774,7 @@ class PruneProducedRecords(Task):
         where = f"PruneProducedRecords[{era}/{name}/{version}]"
         if not stale:
             print(f"{where}: nothing stale among {len(recorded)} records")
-            return
+            return 0
 
         shown = ", ".join(map(str, stale[:12]))
         more = f" and {len(stale) - 12} more" if len(stale) > 12 else ""
@@ -1772,7 +1794,7 @@ class PruneProducedRecords(Task):
                 f"{shown}{more}. Re-run with --prune to delete them, after which those seeds "
                 "are produced again."
             )
-            return
+            return 0
 
         def drop(seed):
             # `silent=False`, or a removal that failed is simply reported as done: the target's
@@ -1787,3 +1809,143 @@ class PruneProducedRecords(Task):
             f"{where}: {len(stale)} stale record(s) deleted -- seeds {shown}{more}. Those seeds "
             "will be produced again on the next RunProd."
         )
+        return len(stale)
+
+
+class ProductionTask(Task):
+    """Produce, repair what the storage lost, merge -- one command for a whole production.
+
+    The three steps are what an operator runs by hand, in the order that makes the middle one worth
+    having. A `produced/` record whose staged nano file has been lost is invisible until the merge
+    of its group runs, and then that group fails on every attempt: on 2026-09-15 three groups of the
+    Run3_2022EE production sat like that, one lost file of fifty each, and the reason was legible
+    only in a CRAB job's stdout. Checking the records *before* the merge turns each of them into a
+    seed that is simply produced again.
+
+    The repair is preventive rather than reactive because luigi cannot express the other order: a
+    task whose dynamic dependency **fails** is never re-run (`luigi/worker.py`, `_run_get_new_deps`
+    hands incomplete requirements to the scheduler and returns), so there is no point at which
+    "merge, and prune if it failed" could do the pruning. A file lost after this has swept
+    therefore still fails its merge branch, and running the same command again repairs and finishes
+    it -- which is why the failure message says exactly that.
+
+    Deliberately a plain task rather than a workflow, like `PruneProducedRecords` and for the same
+    reason: a law local workflow re-checks its branches on every pass and a never-complete branch is
+    rescheduled for ever. Here completeness is the merged files themselves, so a finished production
+    is a no-op and an interrupted one resumes where it stopped.
+
+    The repair is bounded by `max_repairs`, counted on this instance: luigi re-executes `run()` from
+    the top on every pass but keeps the same task instance. That holds only while the task runs in
+    this process, so the configurations where it would not -- more than one worker, or a worker
+    timeout -- are refused rather than silently degraded (`_require_one_process`).
+    """
+
+    # a plain Parameter would be worse than useless here: law resolves an unrecognised `workflow`
+    # to the first workflow class in the MRO, so `--backend CRAB` would send a whole wave to the
+    # local HTCondor pool without a word
+    backend = luigi.ChoiceParameter(
+        default="crab",
+        choices=("crab", "htcondor", "local"),
+        var_type=str,
+        significant=False,
+        description="backend the production and merge run on",
+    )
+    max_repairs = luigi.IntParameter(
+        default=2,
+        significant=False,
+        description="produce/repair rounds this run may take before giving up; 0 skips the "
+        "repair entirely. Storage that keeps losing files is a fault to fix, not something to "
+        "keep producing into",
+    )
+
+    #: repair rounds this instance has taken; see `run`
+    _rounds = 0
+
+    def _produce(self):
+        return RunProd.req(self, workflow=self.backend)
+
+    def _require_one_process(self):
+        """Refuse the configurations in which the repair bound would not hold.
+
+        `max_repairs` is counted on this task instance, and luigi keeps one instance per parameter
+        set only while it runs the task in *this* process. It stops doing that with more than one
+        worker, and also when a worker timeout is set, since either makes every task run in a
+        subprocess (`luigi/worker.py`, `TaskProcess.use_multiprocessing`). The count would restart
+        on every pass, in exactly the case the bound exists for -- storage that keeps losing files
+        -- and a safety bound that quietly degrades is worse than one that refuses.
+
+        Only when there is a count to keep. `--max-repairs 0` turns the repair off, and then
+        several workers are simply how a `--backend local` production runs its branches in
+        parallel, which is what the rest of the documentation tells an operator to do.
+
+        What this reads is the command line and the configuration, which is what `law run` uses. An
+        embedding script calling `luigi.build(workers=n)` would not be seen -- deliberately: the
+        tests drive the task that way, and reading the build argument instead would refuse them.
+        """
+        if int(self.max_repairs) <= 0:
+            return
+        core = luigi.interface.core()
+        timeout = luigi.worker.worker().timeout or self.worker_timeout
+        if int(core.workers) > 1 or timeout:
+            raise RuntimeError(
+                "ProductionTask keeps its repair count in memory, and luigi runs a task in its "
+                f"own process when workers > 1 (here {core.workers}) or a worker timeout is set "
+                f"(here {timeout}), which would restart that count on every pass. Either run it "
+                "with the default single worker and no --worker-timeout, or -- for a local "
+                "production, where --workers is what runs the branches in parallel -- pass "
+                "--max-repairs 0 to turn the repair off and run `law run PruneProducedRecords` "
+                "yourself before and after."
+            )
+
+    def _merge(self):
+        return NanoMergeTask.req(self, workflow=self.backend)
+
+    def complete(self):
+        """The merged files are the production's product, so they are what "done" means."""
+        return self._merge().complete()
+
+    def output(self):
+        return []
+
+    def run(self):
+        self._require_one_process()
+        yield self._produce()
+        # luigi re-executes this generator from the top after every dependency batch, so the last
+        # pass would otherwise sweep the storage once more for nothing. Asking the merge first
+        # costs nothing -- luigi checks it anyway -- and it is what ends the sequence.
+        if int(self.max_repairs) > 0 and not self._merge().complete():
+            pruned = self._repair()
+            if pruned:
+                # the bound is checked here, not before the sweep: a round that finds nothing is
+                # the normal way out, and refusing to merge because of the count alone would
+                # strand a production that is in fact repaired
+                if self._rounds >= int(self.max_repairs):
+                    raise RuntimeError(
+                        f"{pruned} record(s) whose staged file is gone were still being found "
+                        f"after {self._rounds} repair round(s). Each round produces those seeds "
+                        "again, so this is storage losing files about as fast as they can be "
+                        "replaced rather than something to keep producing into: check the "
+                        "storage, then run this again (or raise --max-repairs if the losses "
+                        "really are finite)"
+                    )
+                self._rounds += 1
+                # exactly the pruned seeds are incomplete now, so this submits only those
+                yield self._produce()
+        yield self._merge()
+
+    def _repair(self):
+        """Delete the records whose staged file is gone, and report how many.
+
+        Called inline, not yielded: `PruneProducedRecords` never reports itself complete -- records
+        go stale again tomorrow -- so a dependency on it would come back unmet on every pass. It is
+        driver-side work (three remote listings per point and version), and it is idempotent, which
+        it has to be: luigi re-executes `run()` from the top after every dependency batch.
+        """
+        pruner = PruneProducedRecords.req(self, prune=True)
+        pruner.run()
+        if pruner.n_pruned:
+            print(
+                f"ProductionTask: {pruner.n_pruned} record(s) whose staged file was gone have "
+                "been deleted; producing those seeds again before merging"
+            )
+        return pruner.n_pruned
