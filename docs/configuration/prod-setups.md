@@ -41,6 +41,19 @@ files_per_merge: 25                       # per-seed nanos per NanoMergeTask gro
 
 production_mode: GluGlutoRadion           # default production mode for the points below
 
+resources:                                # what a job of this production asks the batch system
+  RunProd:                                # for; a task left out keeps DSProd's own default
+    max_runtime: 16                       # hours
+    memory: 10000                         # MB per job
+    n_cpus: 4                             # cores
+  NanoMergeTask:
+    max_runtime: 3
+    memory: 5000
+    n_cpus: 1
+  MakeGridpack:
+    max_runtime: 12                       # no `memory`: left to the framework
+    n_cpus: 1
+
 points:
   - name: GluGlutoRadiontoHHto2B2Vto2B2JLNu_M-800   # the DAS dataset name
     mass: 800
@@ -62,6 +75,7 @@ points:
 | `first_step` / `last_step` | Bound the CMSSW chain `RunProd` runs. |
 | `events_per_job` | Events per `RunProd` seed (seeds per point and era = `ceil(events_total[era] / events_per_job)`). |
 | `files_per_merge` | How many per-seed nanos `NanoMergeTask` groups into one output. |
+| `resources` | Per task, what its jobs ask the batch system for — `max_runtime` (hours), `memory` (MB per job) and `n_cpus` (cores). Optional; see [below](#what-a-job-asks-for). |
 
 !!! warning "`events_total` must fill whole merged files"
     A sample is delivered as `events_total / (events_per_job * files_per_merge)` files, and DSProd
@@ -135,6 +149,55 @@ point and seed — never by branch id — so a selective run writes exactly wher
 would, and the rest can be produced later. All three are ordinary task parameters, so they
 propagate to the upstream tasks of the same run, and each combination gets its own local job area
 (law keys its control files by branch range).
+
+## What a job asks for
+
+How long a job runs, how much memory it needs and how many cores it can use are properties of the
+*production*, not of DSProd: one model's gridpack takes minutes where another's takes hours, and a
+denser era needs more memory per event than a light one. Each setup therefore carries its own
+`resources:` block, keyed by task:
+
+```yaml
+resources:
+  RunProd:
+    max_runtime: 16     # hours; `16h`, `90m` and `16` are read as the command line reads them
+    memory: 10000       # MB per job
+    n_cpus: 4           # cores
+```
+
+Three settings are accepted per task — `max_runtime`, `memory` and `n_cpus` — and a task may name
+any subset: **a setting the setup does not name is left to DSProd**, which is how you say "no
+particular requirement". There is no second way to say it — a value that asks for nothing
+(`memory: 0`) is refused, because zero runtime would mean *no limit* on CRAB and a negative one on
+HTCondor, and a zero memory or core count is the framework's own marker for "work it out". Precedence is the one you would expect, because the block enters luigi's own
+configuration layer rather than being pushed onto the task afterwards:
+
+```
+--RunProd-max-runtime 30h    >    the setup's resources:    >    DSProd's default for that task
+```
+
+So one run can override a setup without editing it, and a task the setup does not mention keeps the
+default DSProd ships (`RunProd` 24 h / 10000 MB / 4 cores, `NanoMergeTask` 3 h / 5000 MB / 1 core,
+`MakeGridpack` 12 h). An entry naming a task that does not exist, a setting that is not one of the
+three, a value the setting cannot take, or a value that asks for nothing is **refused** when the
+setup is read. So is a task that
+does not run on a batch system (`ImportGridpack` runs locally, so it has no cores to ask for) and a
+shared base class such as `HTCondorWorkflow`, which carries the three settings but is nobody's task:
+a resource request nobody applies would otherwise be noticed only when the jobs came back killed.
+
+!!! note "Naming a memory can cost you a core"
+    CRAB sells memory only in per-core units — `max(3000, 2500 × numCores)` MB — so a request is
+    rounded up to the cores that can hold it: `memory: 3000` for a single-core job buys it a
+    **second core** it never uses, while a job that names no memory gets the same 3000 MB on one
+    core. That is why the `MakeGridpack` entry above names none (see
+    [settings](settings.md#cores-and-memory-are-asked-for-separately)). The same arithmetic is why
+    `NanoMergeTask` above runs on two CRAB cores although `haddnano` is single-threaded: its 5000 MB
+    needs them, and `n_cpus: 1` is still the right statement of what the payload uses.
+
+Asking for less is not free in either direction. A job that outlives its `max_runtime` is killed;
+but CRAB tests the request against the time a pilot has **left**, not against its full length, so a
+shorter one matches more pilots and starts sooner. Which way to err is a judgement about that
+production — and one worth writing down next to the number, since nothing else records it.
 
 ## Points and gridpacks
 

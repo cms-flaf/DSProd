@@ -81,9 +81,12 @@ crab:
 ### Cores and memory are asked for separately
 
 Each task declares its own `n_cpus` and `memory` (in MB) next to its `max_runtime`; `RunProd` asks
-for 4 cores and 10000 MB, `NanoMergeTask` for 1 CPU and 5000 MB. `--<task>-crab-memory` overrides
-the memory for one run. A `memory` of 0 falls back to `crab.memory_mb`, and then to CRAB's own
-`max(3000, 2500 * numCores)`.
+for 4 cores and 10000 MB, `NanoMergeTask` for 1 CPU and 5000 MB. Those are DSProd's defaults — a
+production setup sets its own in a [`resources:` block](prod-setups.md#what-a-job-asks-for), since
+what a job needs belongs to the production rather than to the framework. `--<task>-crab-memory`
+overrides the memory for one run. A `memory` of 0 falls back to `crab.memory_mb`, and then to CRAB's own
+`max(3000, 2500 * numCores)`; that is the framework's marker for "work it out", which a setup
+expresses by naming no memory at all rather than by writing 0.
 
 !!! warning "CRAB sells memory only in per-core units, so `max_cores` bounds both"
     CRAB accepts only **1, 2, 4 or 8** cores and refuses any task above

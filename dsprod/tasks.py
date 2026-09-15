@@ -26,6 +26,8 @@ from dataclasses import replace
 
 import law
 import luigi
+import luigi.configuration
+import luigi.task_register
 import yaml
 
 from . import gridpack_store, registry, run_step
@@ -100,6 +102,125 @@ def copy_param(ref_param, new_default):
 
 def is_remote_path(path):
     return path.startswith(_REMOTE_PREFIXES)
+
+
+def to_abs_path(path):
+    """Absolute form of a setup or config path given relative to `ANALYSIS_PATH`."""
+    if len(path) == 0:
+        return os.getenv("ANALYSIS_PATH")
+    if path[0] == "/" or is_remote_path(path):
+        return path
+    return os.path.join(os.getenv("ANALYSIS_PATH"), path)
+
+
+#: the resources a setup may request per task, in the units of the task's own parameters:
+#: `max_runtime` in hours, `memory` in MB per job, `n_cpus` in cores
+SETUP_RESOURCES = ("max_runtime", "memory", "n_cpus")
+
+#: setups parsed in this process, by absolute path
+_setup_cache = {}
+
+
+def load_setup(path):
+    """Parse a production setup, once per path, and apply its `resources:` to this process."""
+    if path not in _setup_cache:
+        with open(path, "r") as f:
+            setup = yaml.safe_load(f)
+        _setup_cache[path] = (setup, setup_resources(setup, path))
+    setup, settings = _setup_cache[path]
+    # applied on every call, not only on the parse: the settings have to be in the configuration
+    # of whatever process is resolving parameters right now, and the parse is what is cached
+    cfg = luigi.configuration.get_config()
+    for family, name, value in settings:
+        cfg.set(family, name, value)
+    return setup
+
+
+def setup_resources(setup, path):
+    """A setup's `resources:` block as `(task family, parameter, value)` for luigi's config.
+
+    What a job needs is a property of the production, not of the code: one model's gridpack takes
+    minutes where another's takes hours, and a denser era needs more memory per event than a light
+    one. The numbers therefore belong next to the points they describe, and each setup carries its
+    own.
+
+    luigi's config layer is deliberately where they land. It sits between a parameter's default and
+    the command line, so a setup overrides the default and `--RunProd-max-runtime 30h` still
+    overrides the setup; and because nothing is patched onto the task afterwards, the submitted job
+    configuration, the branch tasks and the command line a job is launched with all read one value.
+    """
+    # the block is read in full before any of it is applied, so a mistake in its second entry
+    # cannot leave the first one set in a process that is about to report the mistake
+    settings = []
+    resources = setup.get("resources") or {}
+    if not isinstance(resources, dict):
+        raise RuntimeError(
+            f"{path}: resources: expected a mapping of task name to requests, got {resources!r}"
+        )
+    for task_name, requested in resources.items():
+        task_cls = _resource_task_cls(task_name, path)
+        params = dict(task_cls.get_params())
+        for name, value in (requested or {}).items():
+            if name not in SETUP_RESOURCES:
+                raise RuntimeError(
+                    f"{path}: resources: {task_name}: '{name}' is not a resource a setup sets "
+                    f"({', '.join(SETUP_RESOURCES)})"
+                )
+            # as a string, so the parameter parses it exactly as it would the same value on the
+            # command line -- `max_runtime: 16` and `max_runtime: 16h` therefore both mean 16 hours
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise RuntimeError(
+                    f"{path}: resources: {task_name}: {name}: expected a number, got {value!r}"
+                )
+            try:
+                parsed = params[name].parse(str(value))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"{path}: resources: {task_name}: {name}: {value!r} is not a value this "
+                    f"setting takes ({exc})"
+                ) from None
+            # A setup states what its jobs need. Nothing here means "no request": zero runtime is
+            # no limit on CRAB and a negative one on HTCondor, and a zero memory or core count is
+            # the framework's own marker for "work it out", which a setup says by leaving the key
+            # out -- one meaning, one spelling.
+            if parsed <= 0:
+                raise RuntimeError(
+                    f"{path}: resources: {task_name}: {name}: {value!r} asks for nothing. Leave "
+                    f"the key out to let DSProd decide {name} for this task"
+                )
+            settings.append((task_cls.get_task_family(), name, str(value)))
+    return settings
+
+
+def _resource_task_cls(task_name, path):
+    """The DSProd task a `resources:` entry names, or an error listing the ones it could name.
+
+    Only a task that can actually be run counts. luigi resolves a config section per concrete task
+    family, so a request written against a shared base class -- `HTCondorWorkflow`, which carries
+    all three parameters -- would be accepted and then apply to nothing at all.
+    """
+    tasks_by_name = _resource_tasks()
+    if task_name not in tasks_by_name:
+        raise RuntimeError(
+            f"{path}: resources: '{task_name}' is not a production task that runs on a batch "
+            f"system; resources can be set for {', '.join(sorted(tasks_by_name))}"
+        )
+    return tasks_by_name[task_name]
+
+
+def _resource_tasks():
+    """The runnable tasks that take resource requests, by the name a setup calls them."""
+    found = {}
+    for name in luigi.task_register.Register.task_names():
+        try:
+            cls = luigi.task_register.Register.get_task_cls(name)
+        except luigi.task_register.TaskClassException:
+            continue
+        if issubclass(cls, Task) and all(
+            p in dict(cls.get_params()) for p in SETUP_RESOURCES
+        ):
+            found[name] = cls
+    return found
 
 
 def select_by_pattern(values, patterns, option, setup, key=lambda v: v):
@@ -214,12 +335,27 @@ class Task(law.Task):
     process = None
     all_points = None
 
+    @classmethod
+    def get_param_values(cls, params, args, kwargs):
+        # The setup is read here, before luigi resolves this task's parameters, because that is
+        # the moment its `resources:` block has to be in place: it acts through the config layer
+        # luigi consults while resolving, so `__init__` would be too late.
+        given = dict(zip([name for name, _ in params], args))
+        given.update(kwargs)
+        setup = given.get("setup")
+        if setup is None:
+            setup_param = dict(params)["setup"]
+            if setup_param.has_task_value(cls.get_task_family(), "setup"):
+                setup = setup_param.task_value(cls.get_task_family(), "setup")
+        if setup:
+            load_setup(to_abs_path(setup))
+        return super(Task, cls).get_param_values(params, args, kwargs)
+
     def __init__(self, *args, **kwargs):
         super(Task, self).__init__(*args, **kwargs)
         setup_path = self.to_abs(self.setup)
         if Task.setup_path is None:
-            with open(setup_path, "r") as f:
-                Task.prod_setup = yaml.safe_load(f)
+            Task.prod_setup = load_setup(setup_path)
             cond_path = self.to_abs(Task.prod_setup["conditions"])
             with open(cond_path, "r") as f:
                 Task.conditions = yaml.safe_load(f)
@@ -371,11 +507,7 @@ class Task(law.Task):
         return os.getenv("ANALYSIS_DATA_PATH")
 
     def to_abs(self, path):
-        if len(path) == 0:
-            return self.ana_path()
-        if path[0] == "/" or is_remote_path(path):
-            return path
-        return os.path.join(self.ana_path(), path)
+        return to_abs_path(path)
 
     def store_parts(self):
         """Local (job/bookkeeping) directory of this run.

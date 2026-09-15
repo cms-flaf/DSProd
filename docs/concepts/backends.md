@@ -23,14 +23,20 @@ Submits to the CERN HTCondor pool. Jobs bootstrap from the shared AFS checkout (
 and see the installed CMSSW releases under `soft/` directly. Relevant knobs (all `significant=False`,
 so they do not change task identity):
 
-- `--max-runtime <hours>` (per-task defaults: MakeGridpack 12 h, RunProd 24 h, NanoMergeTask 3 h);
-- `--n-cpus <n>` (RunProd defaults to 2); cmsDriver runs its steps with that many threads;
+- `--max-runtime <hours>` (DSProd's per-task defaults: MakeGridpack 12 h, RunProd 24 h,
+  NanoMergeTask 3 h);
+- `--n-cpus <n>` (RunProd defaults to 4); cmsDriver runs its steps with that many threads;
 - `--krenew <hours>` — how often to renew the Kerberos ticket while polling.
 
-`--max-runtime` and `--n-cpus` are **per task**: each task keeps its own default and neither value
-is passed on to the tasks it requires. Running `NanoMergeTask` therefore still gives its `RunProd`
-requirement 24 h and 4 CPUs, not the merge task's 3 h and 1 CPU. To change one, address the task by
-name — `--RunProd-max-runtime 36`.
+`--max-runtime` and `--n-cpus` are **per task**: each task keeps its own value and neither is
+passed on to the tasks it requires. Running `NanoMergeTask` therefore still gives its `RunProd`
+requirement the runtime and CPUs of `RunProd`, not the merge task's 3 h and 1 CPU. To change one,
+address the task by name — `--RunProd-max-runtime 36`.
+
+The defaults above are DSProd's own. What a *production* asks for is written in its setup, which
+outranks them and is outranked in turn by the command line — see
+[`resources:`](../configuration/prod-setups.md#what-a-job-asks-for). The setup this repository
+ships for the HH production, for instance, gives `RunProd` 16 h.
 
 Jobs request AlmaLinux9 workers and write their HTCondor logs under `data/logs/`.
 
