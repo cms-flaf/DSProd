@@ -38,9 +38,15 @@ fs_default: root://cmseos.fnal.gov//eos/uscms/store/group/lpcflaf/DSProd/
 #   auto_blacklist:                 quarantine sites whose recent jobs mostly fail (on by default;
 #     enabled: true                 set `auto_blacklist: false` to keep only the static blacklist)
 #     min_failures: 5               failures needed before a site can be quarantined at all
-#     min_failure_rate: 0.5         ... and the fraction of jobs SENT there (ended + in flight)
+#     min_failure_rate: 0.5         ... and the fraction of jobs SENT there (ended + in flight;
+#                                   for the burst below, of the jobs that ENDED in its window)
 #     relative_factor: 2.0          ... and how much worse than the other sites it must be
 #     min_baseline_jobs: 20         ... judged against at least this many jobs elsewhere
+#     burst_failures: 20            failures inside `burst_minutes` quarantine a site at once,
+#     burst_minutes: 15             without waiting for the 24 h rate -- a black hole fails faster
+#                                   than a healthy site finishes, so the rate test is slow against
+#                                   it; the three checks above apply to the window as well, and a
+#                                   very large `burst_failures` leaves only the rate test
 #     quarantine_hours: 24          how long its FIRST quarantine lasts; each further one
 #                                   doubles, judged on the outcomes recorded after each ban
 #     max_quarantine_hours: 768     the ceiling the doubling stops at -- 32 days

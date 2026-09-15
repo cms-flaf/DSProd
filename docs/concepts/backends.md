@@ -279,13 +279,36 @@ submitted without the quarantined sites. It is on by default; the thresholds liv
 |---|---|---|
 | `enabled` | `true` | `auto_blacklist: false` keeps only the static `blacklist` |
 | `min_failures` | 5 | failures needed before a site can be quarantined at all |
-| `min_failure_rate` | 0.5 | ... and the fraction of the jobs *sent* there that failed |
+| `min_failure_rate` | 0.5 | ... and the fraction of the jobs *sent* there that failed (of the jobs that **ended** in the window, for the burst below) |
 | `relative_factor` | 2.0 | ... and how many times worse than the other sites it must be |
 | `min_baseline_jobs` | 20 | ... judged against at least this many jobs elsewhere |
+| `burst_failures` | 20 | failures inside `burst_minutes` that quarantine a site at once (a very large value leaves only the rate test) |
+| `burst_minutes` | 15 | the window a burst is measured over |
 | `quarantine_hours` | 24 | how long its **first** quarantine lasts; each further one doubles |
 | `max_quarantine_hours` | 768 | the ceiling the doubling stops at — 32 days |
 | `window_hours` | 24 | outcomes older than this stop counting |
 | `max_sites` | 10 | never quarantine more than this many sites at once |
+
+Two tests can quarantine a site, and either is enough. The standing one is the rate over
+`window_hours`; the other is a **burst** — `burst_failures` failures inside `burst_minutes`. The
+rate test is slowest against exactly the site that costs most: a black hole fails in seconds, so it
+cycles through slots faster than any healthy site can finish a job, while its own successes from
+earlier in the day hold its 24 h ratio under `min_failure_rate` until they age out. On 2026-09-13
+one site's failures were visible from 07:00 — 77 ended failed within that hour, 287 by 08:00 — and
+it first appears in a submitted blacklist at 09:52. 77 in an hour is just under 20 per quarter of
+an hour, so the burst test would have fired around the end of that first hour and comfortably
+inside the second: one to two hours and several hundred jobs earlier.
+
+It keeps the same relative checks — `min_failure_rate`, `relative_factor` and `min_baseline_jobs`,
+measured over the same short window — so a fault of your own, which fails everywhere at once and
+therefore looks like a burst everywhere, still blacklists nothing. `min_failure_rate` is read
+against a different denominator here, though: the rate test counts every job *sent* to a site
+(ended plus in flight), while the burst counts only what **ended** inside the window, because a job
+still running carries no timestamp that could place it in a quarter of an hour. That is what lets a
+large site whose thousand running jobs are healthy still be caught on the 25 failures one bad node
+produced in ten minutes — and it is worth knowing when tuning the key, since the two tests share
+it. The burst's one blind spot is a grid on which nothing else has *ended* a job inside the window:
+with no baseline to compare against it declines to fire, and only the rate test can.
 
 A site that is still broken when its quarantine runs out earns a longer one: the bans double,
 24 h → 48 h → 96 h → … → 32 days, because the count of quarantines served is kept when a ban
