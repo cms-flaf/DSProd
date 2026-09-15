@@ -51,6 +51,15 @@ invariants apply: a task's completeness is decided by paths on remote storage, r
 not immediately visible, and `exists()` results are cached. A production task that concludes
 "already done" from a stale or partial path skips real work silently.
 
+### Resource requests come from three layers
+
+`max_runtime`, `memory` and `n_cpus` are resolved by luigi in one order: the command line, then the
+production setup's `resources:` block, then the task's own default. Code that reads one of them
+from anywhere else — a value patched onto the task after it is built, a second copy of a default —
+breaks that order silently, and the symptom is a job killed on walltime or memory rather than an
+error. On CRAB the memory number is a kill threshold, not a reservation, so a request quietly
+lowered (or raised, which buys cores) is a dead branch.
+
 ### `produced/` records are the completeness signal
 
 A seed's `produced/` record, not its nano file, is what says the seed ran: the merge deletes the
