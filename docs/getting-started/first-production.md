@@ -21,7 +21,10 @@ test run cannot overwrite a produced sample.
 
 ## Run it
 
-Run the final task — LAW schedules everything upstream:
+Run the final task — LAW schedules everything upstream. For a real production,
+[`ProductionTask`](../concepts/tasks.md#productiontask) is the one command that covers it end to
+end (produce, repair records whose staged file the storage lost, merge); the first run below stops
+at the merge on purpose, so that each step is visible:
 
 ```bash
 source env.sh

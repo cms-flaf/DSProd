@@ -15,6 +15,7 @@ an era's worth of records and re-produce it -- weeks of grid time for a listing 
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -28,6 +29,7 @@ import law  # noqa: E402
 
 law.contrib.load("cms")
 
+import dsprod.tasks as tasks  # noqa: E402
 from dsprod.tasks import PruneProducedRecords  # noqa: E402
 
 ERA = "Run3_2022EE"
@@ -135,10 +137,15 @@ def task(records=(), staged=(), merged=(), remove_fails=False, **attrs):
     return t
 
 
+#: how many records the last `run()` of this module deleted, so a test can assert the count the
+#: driver acts on -- a wrong zero silently spends a repair round, a wrong nonzero spends a wave
+last_pruned = []
+
+
 def run(t):
     """One (era, point, version) unit. `run()` itself only fans these out over threads."""
     with mock.patch("builtins.print") as printed:
-        PruneProducedRecords._check_and_prune(t, ERA, 0, VERSION)
+        last_pruned.append(PruneProducedRecords._check_and_prune(t, ERA, 0, VERSION))
     return " ".join(str(c.args[0]) for c in printed.call_args_list)
 
 
@@ -154,6 +161,9 @@ class AHealthyProductionLosesNothing(unittest.TestCase):
         out = run(t)
         self.assertEqual(remaining(t), list(range(1, 11)))
         self.assertIn("nothing stale", out)
+        self.assertEqual(
+            last_pruned[-1], 0, "a healthy point must report nothing pruned"
+        )
 
     def test_before_a_merge_every_record_is_kept(self):
         t = task(records=range(1, 11), staged=range(1, 11), merged=(), prune=True)
@@ -194,6 +204,7 @@ class ALostFileCostsItsRecord(unittest.TestCase):
         out = run(t)
         self.assertEqual(remaining(t), [1, 2, 3, 4, 5, 6, 8, 9, 10])
         self.assertIn("1 stale record(s) deleted", out)
+        self.assertEqual(last_pruned[-1], 1)
 
     def test_the_incident_of_2026_09_15(self):
         """One staged file of fifty gone, the group not merged: exactly one record to delete."""
@@ -363,6 +374,51 @@ class AndTheBlastRadiusIsHeldDown(unittest.TestCase):
         t = task(records=range(1, 16), staged=range(1, 11), merged=(), prune=True)
         run(t)
         self.assertEqual(remaining(t), list(range(1, 16)))
+
+
+class TheClimbStopsAtTheTopOfTheFileSystem(unittest.TestCase):
+    """With a real law target chain, because this is where the fakes stop being faithful.
+
+    On a `LocalFileSystem` with a base, asking the target at the base for its parent raises
+    ("when no target path is defined, is_tmp must be set"); on a remote one the path is absolutised
+    and `.parent` returns None at the root. The climb has to read both as "nowhere else to ask",
+    and a point whose `produced/` tree does not exist yet must come back absent rather than raising
+    -- `fs_default` on a local path is a configuration DSProd supports.
+    """
+
+    def test_a_point_with_no_directory_reads_as_absent(self):
+        """The era above it lists the other points and not this one: absence, established."""
+        with tempfile.TemporaryDirectory() as d:
+            era = os.path.join(d, "XHHbbWW/produced/nanoAOD_v12/Run3_2022EE")
+            os.makedirs(os.path.join(era, "another_point"))
+            fs = law.LocalFileSystem(base=d)
+            missing = law.LocalDirectoryTarget(
+                "XHHbbWW/produced/nanoAOD_v12/Run3_2022EE/P", fs=fs
+            )
+            self.assertEqual(PruneProducedRecords._names(missing), set())
+
+    def test_a_climb_that_reaches_the_base_reports_the_listing_it_could_not_read(self):
+        """Nothing on the storage at all, so nothing can answer and the sweep must stop -- with
+        the error about the directory it was asked for, not with law's "is_tmp must be set" from
+        walking off the top of the file system."""
+        with tempfile.TemporaryDirectory() as d:
+            fs = law.LocalFileSystem(base=d)
+            missing = law.LocalDirectoryTarget(
+                "XHHbbWW/produced/nanoAOD_v12/Run3_2022EE/P", fs=fs
+            )
+            with self.assertRaises(Exception) as caught:
+                PruneProducedRecords._names(missing)
+            self.assertNotIn("is_tmp", str(caught.exception))
+            self.assertIn("P", str(caught.exception))
+
+    def test_law_really_does_raise_at_the_base(self):
+        """The behaviour the helper exists for -- pinned, so a law upgrade that changes it shows
+        up here rather than in a production sweep."""
+        with tempfile.TemporaryDirectory() as d:
+            top = law.LocalDirectoryTarget("XHHbbWW", fs=law.LocalFileSystem(base=d))
+            with self.assertRaises(Exception):
+                top.parent
+            self.assertIsNone(tasks._parent_of(top))
 
 
 class ItNeverReportsItselfDone(unittest.TestCase):
