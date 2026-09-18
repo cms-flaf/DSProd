@@ -9,7 +9,7 @@ The interface — the `ProcessCustomization` abstract base class — lives in DS
 submodule, [DSProdModels](https://github.com/cms-flaf/DSProdModels), mounted at `models/`.
 That tree is **content, not a Python package** — it has no `__init__.py` anywhere; DSProd loads each
 `plugin.py` straight from its path. The reference model is `models/X_HH/` — resonant X→HH, with
-the bbWW final states supplied as gen fragments.
+the bbWW and bbττ final states supplied as gen fragments, one setup each.
 
 ## The interface
 
