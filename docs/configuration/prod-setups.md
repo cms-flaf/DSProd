@@ -5,10 +5,12 @@ eras, which NanoAOD versions, and which points. Every task takes it via `--setup
 
 Setups are **model-dependent**, so they live with their model in the
 [DSProdModels](https://github.com/cms-flaf/DSProdModels) submodule, under
-`<process>/setups/`. For X_HH:
+`<process>/setups/`. A model ships one setup per signal — X_HH ships two, which share its cards
+and gridpacks and differ in the gen fragment their points name and in the directory they write to:
 
 ```
-models/X_HH/setups/Run3_XHHbbWW.yaml
+models/X_HH/setups/Run3_XHHbbWW.yaml        # X -> HH -> bbWW,     output: XHHbbWW
+models/X_HH/setups/Run3_XHHbbtautau.yaml    # X -> HH -> bbtautau, output: XHHbbtautau
 ```
 
 **One setup covers every era, and the whole point list.** Producing part of it, or producing a few

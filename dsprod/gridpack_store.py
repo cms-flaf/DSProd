@@ -60,6 +60,27 @@ def contains(root, rel):
     return bool(out.strip())
 
 
+def tracked_paths(root):
+    """Every path the store tracks, as a set.
+
+    One listing instead of a `contains()` per path: a production grid asks about hundreds of
+    gridpacks, and a `git ls-tree` per question costs more than the whole listing.
+    """
+    if not is_available(root):
+        return set()
+    try:
+        out = _git(root, "ls-tree", "-r", "--name-only", "HEAD").stdout
+    except (subprocess.CalledProcessError, OSError):
+        return set()
+    # `_git` does not decode, and a store path is a file name: utf-8, `surrogateescape` so an
+    # undecodable byte cannot raise here
+    return {
+        line.strip().decode("utf-8", "surrogateescape")
+        for line in out.splitlines()
+        if line.strip()
+    }
+
+
 def _pointer_info(root, rel):
     """(oid, size) of the LFS object behind `rel`, or None if it is not an LFS pointer."""
     try:

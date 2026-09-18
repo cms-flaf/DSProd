@@ -21,9 +21,14 @@ batch tasks require it so the releases exist before jobs run.
 
 Both provide the same product — `<output>/gridpacks/<gridpack-name>/gridpack.tar.xz`, relative to
 `fs_default` — and both branch over **distinct** gridpacks, not points, since several points can
-share one (the `2B2JLNu` and `2B2L2Nu` final states of a mass point use the same gridpack, and one
-branch per point would make them race on the same output). Which of the two does the work depends only on where the
-gridpack already is:
+share one (the `2B2JLNu`, `2B2L2Nu` and `2B2Tau` final states of a mass point use the same
+gridpack, and one branch per point would make them race on the same output). Which of the two does
+the work depends only on where the gridpack already is:
+
+**Two setups do not share the copy**, even for the same gridpack: the product path above starts
+at the setup's `output:`, so `XHHbbWW/gridpacks/...` and `XHHbbtautau/gridpacks/...` are different
+targets and each production imports its own. What is shared is the *content* and the store it
+comes from — for the 80 gridpacks of the X_HH grid that is 2.3 GB written once per setup.
 
 | state | what happens |
 |---|---|
