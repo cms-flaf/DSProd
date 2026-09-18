@@ -1,0 +1,1602 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="DSProd — a LAW-based tool for custom CMS Monte Carlo production (gridpack to NanoAOD) for the FLAF analysis ecosystem.">
+      
+      
+      
+      
+        <link rel="prev" href="../..">
+      
+      
+        <link rel="next" href="../first-production/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Installation - DSProd</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#installation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="DSProd" class="md-header__button md-logo" aria-label="DSProd" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            DSProd
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Installation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/cms-flaf/DSProd" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cms-flaf/DSProd
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="DSProd" class="md-nav__button md-logo" aria-label="DSProd" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    DSProd
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/cms-flaf/DSProd" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cms-flaf/DSProd
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-need-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need first
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clone-the-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clone the repository
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Clone the repository">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-gridpack-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gridpack store
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-your-user-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create your user configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-the-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source the environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grid-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grid proxy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grid proxy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-myproxy-credential-crab-needs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The MyProxy credential CRAB needs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The MyProxy credential CRAB needs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delegating-from-the-proxy-instead-without-the-passphrase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delegating from the proxy instead, without the passphrase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cmssw-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CMSSW on demand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start-a-production" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you start a production
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Before you start a production">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#once-per-checkout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once per checkout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#once-every-25-days-the-myproxy-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once every ~25 days — the MyProxy credential
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#once-every-few-days-the-voms-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once every few days — the VOMS proxy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-new-shell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every new shell
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#then-check-all-of-it-at-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Then check all of it at once
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-production/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Your first production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks & LAW
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Global & user config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/prod-setups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production setups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/processes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Processes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/conditions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Era conditions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-need-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need first
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clone-the-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clone the repository
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Clone the repository">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-gridpack-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gridpack store
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-your-user-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create your user configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-the-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source the environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grid-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grid proxy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grid proxy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-myproxy-credential-crab-needs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The MyProxy credential CRAB needs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The MyProxy credential CRAB needs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delegating-from-the-proxy-instead-without-the-passphrase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delegating from the proxy instead, without the passphrase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cmssw-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CMSSW on demand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start-a-production" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you start a production
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Before you start a production">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#once-per-checkout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once per checkout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#once-every-25-days-the-myproxy-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once every ~25 days — the MyProxy credential
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#once-every-few-days-the-voms-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Once every few days — the VOMS proxy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-new-shell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every new shell
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#then-check-all-of-it-at-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Then check all of it at once
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/cms-flaf/DSProd/edit/main/docs/getting-started/installation.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/cms-flaf/DSProd/raw/main/docs/getting-started/installation.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
+
+
+<h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
+<p>DSProd runs on lxplus (or any CERN AlmaLinux9 / cvmfs-enabled node). The CMSSW releases it uses
+are installed on demand, so there is nothing to build by hand — but a few things have to be in
+place on the account before any of the steps below work.</p>
+<h2 id="what-you-need-first">What you need first<a class="headerlink" href="#what-you-need-first" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Prerequisite</th>
+<th>Why</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A cvmfs- and AFS-enabled CERN node</td>
+<td>CMSSW, the CRAB client and the gridpack tooling all come from <code>/cvmfs/cms.cern.ch</code></td>
+<td><code>ls /cvmfs/cms.cern.ch</code></td>
+</tr>
+<tr>
+<td>Membership of the <strong>CMS VO</strong></td>
+<td>every backend writes to grid storage as a CMS user</td>
+<td><a href="https://voms2.cern.ch:8443/voms/cms">voms-admin</a></td>
+</tr>
+<tr>
+<td>A <strong>grid certificate</strong> installed as <code>~/.globus/usercert.pem</code> + <code>~/.globus/userkey.pem</code></td>
+<td>both credential steps below read it; nothing creates it for you</td>
+<td><code>openssl x509 -noout -subject -enddate -in ~/.globus/usercert.pem</code></td>
+</tr>
+<tr>
+<td>An <strong>SSH key registered on GitHub</strong> <em>and</em> one on <strong>CERN GitLab</strong></td>
+<td>the submodules are cloned over SSH from both hosts</td>
+<td><code>ssh -T git@github.com</code> · <code>ssh -T git@gitlab.cern.ch</code></td>
+</tr>
+<tr>
+<td>A <strong>Kerberos ticket</strong> (and AFS token)</td>
+<td>DSProd renews these while a production polls, but it can only ever renew — it never runs <code>kinit</code></td>
+<td><code>klist</code> · <code>tokens</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">DSProd renews Kerberos, it does not create it</p>
+<p><code>kinit -R</code> fails outright on an empty credential cache, so start a production from a shell
+with a live ticket (<code>kinit</code>) and re-run <code>kinit</code> yourself before the ticket's <em>renewable</em>
+lifetime runs out. A production that outlives it loses AFS mid-run.</p>
+</div>
+<h2 id="clone-the-repository">Clone the repository<a class="headerlink" href="#clone-the-repository" title="Permanent link">&para;</a></h2>
+<p>DSProd uses three submodules:</p>
+<table>
+<thead>
+<tr>
+<th>Submodule</th>
+<th>Path</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>genproductions_scripts</code></td>
+<td><code>genproductions_scripts/</code></td>
+<td>CMS gridpack generators (GitLab cms-gen)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/cms-flaf/DSProdModels">DSProdModels</a></td>
+<td><code>models/</code></td>
+<td>model plugins + production cards + gen fragments</td>
+</tr>
+<tr>
+<td><a href="https://gitlab.cern.ch/cms-flaf/DSProdGridpacks">DSProdGridpacks</a></td>
+<td><code>gridpacks/</code></td>
+<td>stored gridpacks (CERN GitLab, Git LFS)</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:cms-flaf/DSProd.git
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>DSProd
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w"> </span>--init<span class="w"> </span>models<span class="w"> </span>genproductions_scripts
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>./setup_gridpacks.sh<span class="w">    </span><span class="c1"># optional: the gridpack store (see below)</span>
+</code></pre></div>
+<p><code>models</code> is <strong>required</strong> — it provides the production models. Forgetting it does not produce a
+friendly message: the run ends in a <code>FileNotFoundError</code> traceback naming the setup yaml
+(<code>models/X_HH/setups/…</code>), which means this step was skipped.</p>
+<div class="admonition warning">
+<p class="admonition-title">Do not use <code>git clone --recursive</code></p>
+<p>A recursive clone would check <code>gridpacks</code> out and download every gridpack. Init the submodules
+as above instead, then run <code>setup_gridpacks.sh</code>.</p>
+<p>The gridpack store lives on <strong>CERN GitLab</strong> (<code>gitlab.cern.ch/cms-flaf/DSProdGridpacks</code>), with
+<strong>internal</strong> visibility: any authenticated CERN account can read it, and no GitHub permission is
+involved.</p>
+<p>All three submodule remotes are SSH URLs, and they are split across two hosts: <code>models</code> is on
+GitHub, while <code>genproductions_scripts</code> and <code>gridpacks</code> are both on CERN GitLab. You therefore
+need a key registered on each — a missing GitLab key shows up only as
+<code>Permission denied (publickey)</code> on <code>genproductions_scripts</code>.</p>
+</div>
+<h3 id="the-gridpack-store">The gridpack store<a class="headerlink" href="#the-gridpack-store" title="Permanent link">&para;</a></h3>
+<p><code>./setup_gridpacks.sh</code> sets up <code>gridpacks/</code> the way it is meant to be used day to day:</p>
+<ul>
+<li>a <strong>sparse checkout</strong> holding only the per-gridpack <code>README.md</code> provenance files — a few hundred
+  kilobytes instead of the whole gridpack collection;</li>
+<li><strong>every Git-LFS download disabled</strong> (<code>lfs.fetchexclude=*</code>), so no tarball is ever fetched by
+  accident.</li>
+</ul>
+<p>A gridpack is then fetched <strong>on demand</strong>: <code>ImportGridpack</code> streams the one it needs straight from
+the LFS server to <code>fs_default</code> (see <a href="../../concepts/tasks/">Tasks</a>). Nothing is written into the
+working tree, so the sparse checkout stays intact.</p>
+<p>The store is <strong>optional in the sense that nothing breaks without it</strong>: DSProd generates any
+gridpack it cannot find, and the script exits cleanly if the checkout is not permitted. It is
+still worth running — generating a gridpack takes tens of minutes to hours, where importing a
+stored one takes seconds, and for the walkthrough in
+<a href="../first-production/">Your first production</a> the stored gridpacks are what make the run short.</p>
+<p>The script needs <code>git-lfs</code> and SSH access to <code>gitlab.cern.ch</code>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Adding gridpacks you produced</p>
+<p><code>CollectGridpacks</code> copies gridpacks this checkout produced back into the store and prints the
+<code>git add --sparse …</code> commands to commit them — see <a href="../../concepts/tasks/">Tasks</a>.</p>
+</div>
+<h2 id="create-your-user-configuration">Create your user configuration<a class="headerlink" href="#create-your-user-configuration" title="Permanent link">&para;</a></h2>
+<p><code>config/user_custom.yaml</code> holds your personal settings and is <strong>not</strong> part of the repository (it is
+git-ignored). Create it <strong>before running anything</strong>: <code>config/global.yaml</code> points <code>fs_default</code> at the
+<em>shared</em> FNAL production area, so a checkout without a <code>user_custom.yaml</code> writes its output into the
+production tree rather than somewhere of your own.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># config/user_custom.yaml</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">fs_default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd/</span>
+</code></pre></div>
+<p>Point it at your own EOS area. See <a href="../../configuration/settings/">Global &amp; user config</a> for the
+full set of options and the committed defaults in <code>config/global.yaml</code>.</p>
+<h2 id="source-the-environment">Source the environment<a class="headerlink" href="#source-the-environment" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">source</span><span class="w"> </span>env.sh
+</code></pre></div>
+<p>Source it <strong>in every new shell</strong> — it is not a one-off install step. Without it there is no <code>law</code>
+on <code>PATH</code> and no <code>ANALYSIS_PATH</code>, which surfaces as <code>task 'NanoMergeTask' not found</code> or a bare
+<code>KeyError: 'ANALYSIS_PATH'</code>, neither of which mentions <code>env.sh</code>.</p>
+<p>Sourcing <code>env.sh</code> sets up LAW and a Python/ROOT stack. It does <strong>not</strong> build CMSSW — the
+per-era releases are installed later, on demand, by the <a href="../../concepts/tasks/"><code>InstallCMSSW</code></a>
+task. The first time you source it on lxplus, <code>env.sh</code> also vendors a pure-python copy of
+<code>law</code>/<code>luigi</code> into <code>soft/vendor</code> (used by the <a href="../../concepts/backends/">CRAB backend</a> on grid
+workers).</p>
+<p>After sourcing you can list the available tasks:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>law<span class="w"> </span>index
+</code></pre></div>
+<h2 id="grid-proxy">Grid proxy<a class="headerlink" href="#grid-proxy" title="Permanent link">&para;</a></h2>
+<p>Every backend needs a valid VOMS proxy (products are written to EOS). Create one before running:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">source</span><span class="w"> </span>env.sh<span class="w">          </span><span class="c1"># sets X509_USER_PROXY to data/voms.proxy if it is not already set</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>voms-proxy-init<span class="w"> </span>--rfc<span class="w"> </span>--voms<span class="w"> </span>cms<span class="w"> </span>--valid<span class="w"> </span><span class="m">192</span>:00<span class="w"> </span>--out<span class="w"> </span><span class="s2">"</span><span class="nv">$X509_USER_PROXY</span><span class="s2">"</span>
+</code></pre></div>
+<p>Verify it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>voms-proxy-info<span class="w"> </span>-file<span class="w"> </span><span class="s2">"</span><span class="nv">$X509_USER_PROXY</span><span class="s2">"</span><span class="w"> </span>-timeleft<span class="w">   </span><span class="c1"># seconds remaining</span>
+</code></pre></div>
+<p>The <code>--out</code> matters. DSProd reads the proxy from <code>$X509_USER_PROXY</code>, which <code>env.sh</code> sets to
+<code>data/voms.proxy</code> <strong>only when the variable is not already set</strong>; a bare <code>voms-proxy-init</code> writes to
+the client's own default instead. Passing <code>--out "$X509_USER_PROXY"</code> after sourcing <code>env.sh</code> puts it
+where DSProd will look, whatever the shell already had.</p>
+<div class="admonition warning">
+<p class="admonition-title">A run will renew the proxy itself — interactively</p>
+<p><code>RunProd</code> requires <code>CreateVomsProxy</code>, which treats a proxy with less than <strong>24 hours</strong> left as
+unusable: it then <strong>deletes</strong> it and runs <code>voms-proxy-init … --valid 192:00</code>, which stops to ask
+for your certificate passphrase. Start long productions with a fresh proxy so this does not
+happen hours into a run. (<code>--CreateVomsProxy-time-limit</code> changes the threshold.)</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Inside a job the delegated proxy is used as-is</p>
+<p>On a worker node DSProd takes whatever proxy the batch system put in <code>$X509_USER_PROXY</code> and
+never renews or removes it: <code>voms-proxy-init</code> cannot run unattended there, and CRAB's
+delegated proxy lives for slightly under 24 hours — shorter than the renewal threshold that
+applies interactively.</p>
+</div>
+<h3 id="the-myproxy-credential-crab-needs">The MyProxy credential CRAB needs<a class="headerlink" href="#the-myproxy-credential-crab-needs" title="Permanent link">&para;</a></h3>
+<p>The <a href="../../concepts/backends/">CRAB backend</a> needs a second credential: one delegated to
+<code>myproxy.cern.ch</code>, which the CRAB TaskWorker retrieves to keep your grid jobs supplied with a proxy
+for as long as they run. <code>voms-proxy-init</code> does not create it, and it must be valid for <strong>at least
+five days</strong> — the TaskWorker refuses anything shorter, so <code>RunProd --workflow crab</code> checks it up
+front and refuses to submit rather than let a whole production fail hours later.</p>
+<p>Renew it with the CRAB client, which asks for your GRID certificate passphrase and stores 30 days:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>crab<span class="w"> </span>createmyproxy<span class="w"> </span>--days<span class="w"> </span><span class="m">30</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Run it from a shell with <code>env.sh</code> sourced</p>
+<p>DSProd's <code>crab</code> wrapper moves <code>$HOME</code> to a scratch directory so CRAB's <code>~/.crab3</code> never lands
+on AFS. That directory is node-local and has no <code>.globus</code> of its own, so the wrapper symlinks
+your real one into it. Calling the CRAB client from somewhere else works too — it just uses
+your real <code>$HOME</code> directly.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title"><code>myproxy-init</code> on its own does not work</p>
+<p>CRAB looks the credential up under <code>sha1(&lt;your DN&gt;)</code> and under no other name, and the
+TaskWorker can only retrieve it if the delegation carries the TaskWorker DNs as its retrieval
+policy. A bare <code>myproxy-init -d -n -s myproxy.cern.ch</code> gives neither: it stores the credential
+under the plain DN with no policy, so CRAB never sees it. Only <code>crab createmyproxy</code> — which
+asks the CRAB server for the current TaskWorker DNs — produces a usable credential.</p>
+<p>Note also that DSProd submits with <code>crab submit --proxy &lt;file&gt;</code>, and passing <code>--proxy</code> makes
+the CRAB client skip its own delegation and renewal entirely. Nothing in a production run will
+top this credential up for you.</p>
+</div>
+<p>Check what is currently stored:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>myproxy-info<span class="w"> </span>-s<span class="w"> </span>myproxy.cern.ch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span>-l<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>voms-proxy-info<span class="w"> </span>-identity<span class="w"> </span><span class="p">|</span><span class="w"> </span>tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha1sum<span class="w"> </span><span class="p">|</span><span class="w"> </span>cut<span class="w"> </span>-d<span class="s1">' '</span><span class="w"> </span>-f1<span class="k">)</span><span class="s2">"</span>
+</code></pre></div>
+<p><code>timeleft</code> must read at least 5 days for <code>--workflow crab</code> to submit.</p>
+<div class="admonition note">
+<p class="admonition-title">Create the VOMS proxy first</p>
+<p>The name is derived from the proxy, so with no valid proxy <code>voms-proxy-info -identity</code> prints
+nothing, the command asks about the sha1 of the empty string, and <code>myproxy-info</code> then falls
+back to certificate authentication and prompts for your passphrase — for what should be a
+read-only check.</p>
+</div>
+<h4 id="delegating-from-the-proxy-instead-without-the-passphrase">Delegating from the proxy instead, without the passphrase<a class="headerlink" href="#delegating-from-the-proxy-instead-without-the-passphrase" title="Permanent link">&para;</a></h4>
+<p><code>crab createmyproxy</code> reads the certificate from <code>$X509_USER_CERT</code>/<code>$X509_USER_KEY</code> when those are
+set, and a VOMS proxy file is itself a certificate with an unencrypted key. Pointing them at the
+proxy delegates from the proxy and never prompts:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nv">X509_USER_CERT</span><span class="o">=</span><span class="nv">$X509_USER_PROXY</span><span class="w"> </span><span class="nv">X509_USER_KEY</span><span class="o">=</span><span class="nv">$X509_USER_PROXY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span>crab<span class="w"> </span>createmyproxy<span class="w"> </span>--days<span class="w"> </span><span class="m">30</span>
+</code></pre></div>
+<div class="admonition danger">
+<p class="admonition-title">Set those two variables for that one command only — never export them</p>
+<p><code>$X509_USER_CERT</code>/<code>$X509_USER_KEY</code> sit <strong>ahead of the default proxy</strong> in the GSI credential
+search order, so exporting them changes how every grid client in the shell authenticates, not
+just the delegation. Point them at your certificate and <code>myproxy-info</code> — which
+<code>createmyproxy</code> runs itself, right after delegating — tries to authenticate with the
+<em>encrypted</em> private key, cannot prompt, and fails with
+<code>unable to get passphrase ... interrupted or cancelled</code>. CRAB then reports
+<code>It seems your proxy has not been delegated to myproxy</code> even though the delegation succeeded.
+Prefix the single command as shown above and the variables die with it.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">This does not reduce how often you type the passphrase — it increases it</p>
+<p>A credential cannot outlive what signed it, and CRAB enforces that by clamping: it reads the
+remaining whole days of whatever <code>$X509_USER_CERT</code> points at and delegates for exactly that
+long, ignoring <code>--days</code> (<code>CredentialInteractions.py:172,182</code> — the 30-day default it compares
+against is an attribute <code>--days</code> never touches, so on a proxy the clamp always fires).</p>
+<p>From a <code>--valid 192:00</code> proxy the credential is therefore <code>floor(8 − proxy age)</code> days, and the
+5-day gate is satisfied <strong>only while the proxy is younger than about 3 days</strong>. Refreshing the
+proxy needs the passphrase as surely as the certificate route does — so this route asks for it
+roughly every 3 days where <code>crab createmyproxy --days 30</code> asks every ~25. Once the proxy has a
+day or less left, the command refuses outright with <code>YOUR USER CERTIFICATE IS EXPIRED</code>.</p>
+</div>
+<p>Use it as a stop-gap — to top the credential up from a shell that cannot prompt, when you already
+have a fresh proxy — and not as the way you keep the credential alive. For that, the certificate
+route above is both simpler and far less work.</p>
+<h2 id="cmssw-on-demand">CMSSW on demand<a class="headerlink" href="#cmssw-on-demand" title="Permanent link">&para;</a></h2>
+<p>You never install CMSSW by hand. Each production step declares the release and <code>SCRAM_ARCH</code> it
+needs in <a href="../../configuration/conditions/"><code>config/conditions_Run3.yaml</code></a>; <code>InstallCMSSW</code> reads
+those and builds each release once, under <code>soft/&lt;CMSSW_VERSION&gt;/</code>, guarded by a <code>.installed</code>
+flag so it is idempotent. On HTCondor the shared AFS <code>soft/</code> area is visible to the workers; on
+CRAB the releases are set up from cvmfs on the worker itself.</p>
+<h2 id="before-you-start-a-production">Before you start a production<a class="headerlink" href="#before-you-start-a-production" title="Permanent link">&para;</a></h2>
+<p>Everything above, in order, and how often each part has to be redone.</p>
+<h3 id="once-per-checkout">Once per checkout<a class="headerlink" href="#once-per-checkout" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:cms-flaf/DSProd.git<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>DSProd
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w"> </span>--init<span class="w"> </span>models<span class="w"> </span>genproductions_scripts
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>./setup_gridpacks.sh
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">'fs_default: davs://eoshome-X.cern.ch:8444/eos/user/X/YOU/DSProd/\n'</span><span class="w"> </span>&gt;<span class="w"> </span>config/user_custom.yaml
+</code></pre></div>
+<h3 id="once-every-25-days-the-myproxy-credential">Once every ~25 days — the MyProxy credential<a class="headerlink" href="#once-every-25-days-the-myproxy-credential" title="Permanent link">&para;</a></h3>
+<p>Only needed for <code>--workflow crab</code>. Asks for your certificate passphrase.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>crab<span class="w"> </span>createmyproxy<span class="w"> </span>--days<span class="w"> </span><span class="m">30</span>
+</code></pre></div>
+<h3 id="once-every-few-days-the-voms-proxy">Once every few days — the VOMS proxy<a class="headerlink" href="#once-every-few-days-the-voms-proxy" title="Permanent link">&para;</a></h3>
+<p>Asks for your certificate passphrase. Give it a comfortable margin: a proxy under 24 hours makes a
+run stop and re-create it interactively.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>voms-proxy-init<span class="w"> </span>--rfc<span class="w"> </span>--voms<span class="w"> </span>cms<span class="w"> </span>--valid<span class="w"> </span><span class="m">192</span>:00<span class="w"> </span>--out<span class="w"> </span><span class="s2">"</span><span class="nv">$X509_USER_PROXY</span><span class="s2">"</span>
+</code></pre></div>
+<h3 id="every-new-shell">Every new shell<a class="headerlink" href="#every-new-shell" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">source</span><span class="w"> </span>env.sh
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>kinit<span class="w">                  </span><span class="c1"># if `klist` shows no live ticket</span>
+</code></pre></div>
+<h3 id="then-check-all-of-it-at-once">Then check all of it at once<a class="headerlink" href="#then-check-all-of-it-at-once" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nb">source</span><span class="w"> </span>env.sh
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>klist<span class="w">        </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"kerberos   OK"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"kerberos   MISSING -- run kinit"</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>voms-proxy-info<span class="w"> </span>-file<span class="w"> </span><span class="s2">"</span><span class="nv">$X509_USER_PROXY</span><span class="s2">"</span><span class="w"> </span>-exists<span class="w"> </span>-valid<span class="w"> </span><span class="m">24</span>:00<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">             </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"voms proxy OK"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"voms proxy TOO SHORT -- see 'Grid proxy' above"</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span>config/user_custom.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">             </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"user cfg   OK"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"user cfg   MISSING -- output would go to the shared area"</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span>models/X_HH/setups/Run3_XHHbbWW.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">             </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"models     OK"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"models     MISSING -- run the submodule update"</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>law<span class="w"> </span>index<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">             </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"law        OK"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"law        NOT SET UP -- did env.sh run?"</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="c1"># crab only, and only for --workflow crab:</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>myproxy-info<span class="w"> </span>-s<span class="w"> </span>myproxy.cern.ch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">    </span>-l<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>voms-proxy-info<span class="w"> </span>-identity<span class="w"> </span><span class="p">|</span><span class="w"> </span>tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sha1sum<span class="w"> </span><span class="p">|</span><span class="w"> </span>cut<span class="w"> </span>-d<span class="s1">' '</span><span class="w"> </span>-f1<span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="w">    </span><span class="p">|</span><span class="w"> </span>sed<span class="w"> </span>-n<span class="w"> </span><span class="s1">'s/^  timeleft:/myproxy   /p'</span>
+</code></pre></div>
+<p>Every line must print <code>OK</code>, and the <code>myproxy</code> line must show at least 5 days if you intend to use
+CRAB. With that done, go to <a href="../first-production/">Your first production</a>.</p>
+<div class="admonition tip">
+<p class="admonition-title"><code>crab</code> works before the first run, too</p>
+<p>The CRAB client refuses to start without a CMSSW environment, and a fresh checkout has no
+release yet — they are installed during the first run. DSProd's <code>crab</code> wrapper therefore
+cmsenv's a read-only release straight from cvmfs when <code>soft/</code> is still empty, so
+<code>crab createmyproxy</code> works from the moment <code>env.sh</code> has been sourced.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../.." class="md-footer__link md-footer__link--prev" aria-label="Previous: Home">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Home
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../first-production/" class="md-footer__link md-footer__link--next" aria-label="Next: Your first production">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Your first production
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.action.edit", "content.action.view", "content.code.copy", "content.code.annotate", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@9.3/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
