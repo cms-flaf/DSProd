@@ -51,6 +51,14 @@ invariants apply: a task's completeness is decided by paths on remote storage, r
 not immediately visible, and `exists()` results are cached. A production task that concludes
 "already done" from a stale or partial path skips real work silently.
 
+Two rules were bought expensively and must not be relaxed. **A listing that fails is not an empty
+directory**: `gfal_ls_checked` treats only gfal's own *no such file or directory* as absence and
+raises on anything else, so no decision about a product is ever made from an endpoint that merely
+could not be reached. And **a batch status does not retire a branch**: CRAB reports a failed
+payload as `transferring`, which law maps to finished, so `crab_check_job_completeness` makes law
+verify the products first — and drops the cached listings as it does, so the verdict rests on a
+listing newer than the status it judges. Code that reintroduces either shortcut books work that was never done.
+
 ### Resource requests come from three layers
 
 `max_runtime`, `memory` and `n_cpus` are resolved by luigi in one order: the command line, then the
@@ -68,9 +76,9 @@ merge. Two rules follow, and code that breaks either is expensive rather than wr
 record must never be written before the file it describes is on storage, or a merge will trust a
 file that is not there. And deleting a record means re-producing that seed from scratch, so any
 code path that removes one must prove nothing accounts for it — a merged file covers its whole
-group, and a listing that *failed* is not an empty listing — which `exists()` cannot tell you,
-because the gfal interface answers it by listing the parent with `silent=True` and caches the
-negative.
+group, and a listing that *failed* is not an empty listing. `exists()` answers by listing the
+parent and caching the result, so that distinction has to survive the listing itself: it does
+because `gfal_ls_checked` raises rather than returning "empty" when it cannot reach the endpoint.
 
 ### Registry and processes
 

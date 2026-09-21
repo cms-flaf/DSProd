@@ -58,8 +58,10 @@ What to look at, in order:
 1. **Were the outputs consumed downstream?** `NanoMergeTask` deletes each nano file it merges, and
    the [`produced/` records](tasks.md#runprod) are what marks those seeds done. Check that the
    records exist — for a production that predates them, run `BackfillProducedRecords`.
-2. **Was the storage reachable?** A listing that fails looks the same from here. Run again once it
-   is back.
+2. **Was the storage reachable?** A listing that fails no longer reads as "the file is not
+   there" — `gfal_ls_checked` retries and then raises, and only gfal's own *no such file or
+   directory* counts as absence — so an unreachable endpoint now stops the run with its own error
+   instead of condemning the sample. If that is what you got, run again once it is back.
 3. **Do you actually want the work redone?** Delete the workflow's submission file under
    `data/jobs/` and start again — a run with nothing to resume never performs this check.
 
@@ -363,13 +365,21 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     task whose status stays unreadable for ten consecutive polls does raise: a production that
     quietly stalls is worse than one that stops.
 
-!!! note "A job that has run is finished, whatever `crab.log` says"
+!!! note "A job that has run is done polling — which is not the same as having succeeded"
     DSProd disables CRAB's stageout, so a job CRAB reports as `transferring`/`transferred` has
-    done all it will ever do. law normally decides that per poll by reading
-    `disableAutomaticOutputCollection` out of the project's `crab.log`; a log that is missing or
-    was rewritten without that line reads as "transfers expected", and those jobs are then polled
-    as running until the workflow gives up on them. DSProd pins the setting instead, so it does
-    not depend on a log file surviving.
+    done all it will ever do and there is nothing left to wait for. law normally decides that per
+    poll by reading `disableAutomaticOutputCollection` out of the project's `crab.log`; a log that
+    is missing or was rewritten without that line reads as "transfers expected", and those jobs are
+    then polled as running until the workflow gives up on them. DSProd pins the setting instead, so
+    it does not depend on a log file surviving.
+
+    What that state does **not** say is that the job worked. CRAB parks a payload that exited
+    non-zero in `transferring` too, in the window between the payload exiting and the post-job
+    classifying it as failed, and law maps the state to `finished` either way. A poll landing
+    inside that window therefore books a failed job as finished, stamps it `dummy_job_id` and never
+    queries it again. On 2026-09-18 one poll harvested 113 of them and the status line read
+    `finished: 113` for a production that had written nothing at all. Since then the products
+    decide: see [A finished job is one with products](#a-finished-job-is-one-with-products).
 
 !!! note "CRAB does not write to your AFS home"
     CRAB rewrites its task cache `~/.crab3` on *every* command, status queries included. With
@@ -400,6 +410,42 @@ A site you know is bad belongs in the static `blacklist` instead: that one is ne
     that never sourced `env.sh` fails the sandbox, and law reports it only indirectly, as every
     job carrying `dummy_job_id` and being retried with `error: unknown job id`. DSProd now checks
     the sandbox before submitting and reports that case directly.
+
+### A finished job is one with products
+
+law asks CRAB what happened to a job, and CRAB's answer alone is not enough to retire a branch: a
+payload that exited non-zero passes through `transferring`, which law reads as finished (see the
+note above). DSProd therefore has law verify the branch's outputs before it accepts that status
+(`crab_check_job_completeness`). A job whose products are not on `fs_default` is put back as
+
+```
+branch task(s) incomplete due to missing outputs
+```
+
+and retried like any other failure, instead of being retired with `dummy_job_id` and dropped from
+the poll.
+
+The check is not a per-poll storage sweep. law keeps an accepted job in `finished_jobs` and skips
+it at the top of every later iteration, so each job is verified **once for the whole run**.
+
+What it does cost is one directory listing per poll per output directory it consults, because the
+cached listings are dropped at the start of each check (`expire_path_caches`, called from
+`crab_check_job_completeness` — the one moment law offers between the status query and the
+verdicts). That is deliberate and it is the difference between a check and a guess: `exists()`
+answers an unknown file from a cached listing of its directory, valid for 600 s against a 5 min
+poll, so a record written since the last listing would read as missing and demote a job that really
+did finish — costing it one of its 9 retries, a wait at the wave gate, and a retry whose own check
+reads the same stale entry. Confirming each negative with a stat instead would be sound too, but a
+`gfal-stat` against the production endpoint measures ~0.9 s, so it would put ~10 minutes into every
+driver start where a listing per directory costs seconds.
+
+It is only meaningful because a listing that fails now raises instead of reading as "not there"
+(`gfal_ls_checked`). With the old behaviour one blinked `gfal-ls` would have demoted a job that
+really did finish and thrown away hours of grid time — which is why the two arrived together.
+
+The `htcondor` backend keeps law's default and retires a branch on the batch status alone. That is
+deliberate: HTCondor has no state that means "the payload has stopped but nobody has classified it
+yet", which is the state this guards against.
 
 ### When law's own tree briefly disappears
 
