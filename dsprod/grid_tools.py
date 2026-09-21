@@ -9,6 +9,7 @@ where the gfal2 python bindings are not available for the job's python.
 import datetime
 import os
 import re
+import time
 import uuid
 
 from .tools import (
@@ -300,12 +301,51 @@ def gfal_ls_recursive(path, voms_token=None, verbose=1):
 
 
 def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
+    """List `path`, or None if that did not work for any reason.
+
+    Keeps the two apart only for callers that genuinely cannot act on the difference -- the
+    watchdog, which withholds its verdict until it can list. Anything that decides whether a
+    product exists wants `gfal_ls_checked` instead.
+    """
     try:
         return gfal_ls(
             path, voms_token=voms_token, catch_stderr=catch_stderr, verbose=verbose
         )
     except GfalError:
         return None
+
+
+#: what gfal says about a path that is genuinely not there, as opposed to a listing that failed
+_ABSENT_MESSAGES = ("no such file or directory", "file not found")
+
+
+def is_absent_error(error):
+    """Whether a `GfalError` says the path does not exist, rather than that the listing failed."""
+    return any(msg in str(error).lower() for msg in _ABSENT_MESSAGES)
+
+
+def gfal_ls_checked(path, voms_token=None, verbose=0, attempts=3, delay=2.0):
+    """List `path`; return None **only** when gfal says it is not there.
+
+    Any other failure -- a timeout, an SSL handshake, an endpoint under load -- is retried and
+    then raised. Collapsing the two is not a cosmetic difference: a caller that reads "could not
+    list" as "not there" concludes that a product is missing, and on 2026-09-18 that turned one
+    blinked listing per job into 1400 failed jobs and a production that reported 113 finished
+    branches with nothing on storage.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return gfal_ls(
+                path, voms_token=voms_token, catch_stderr=True, verbose=verbose
+            )
+        except GfalError as e:
+            if is_absent_error(e):
+                return None
+            if attempt == attempts:
+                raise
+            time.sleep(delay * attempt)
+    # only reachable with attempts < 1, which would otherwise return "absent" without looking
+    raise GfalError(f"gfal_ls_checked: {attempts} attempts is not a listing of {path}")
 
 
 def gfal_stat(path, voms_token=None):

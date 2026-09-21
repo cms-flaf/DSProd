@@ -342,8 +342,9 @@ from scratch; with it, the stale records are deleted and those seeds are produce
 
 Two rails, because the blast radius of a mistake here is an era. A directory listing that *fails*
 stops the prune instead of reading as "nothing is staged", which would condemn every record of the
-point — note that `exists()` cannot be used for this, since DSProd's gfal interface answers it by
-listing the parent silently and so returns the same "no" for a blink as for an absence. Absence is
+point — `listdir()` and not `exists()`, because `exists()` answers an unknown file from a cached
+listing of its directory and so can answer from evidence older than the question (a failed listing
+itself is no longer a "no" anywhere: `gfal_ls_checked` raises). Absence is
 established instead from the first *successful* listing of an ancestor that does not carry the
 branch below it, climbing when it has to: before a production's first merge there is no merged
 tree at all, so the point's directory and the era's above it are both missing and the answer comes

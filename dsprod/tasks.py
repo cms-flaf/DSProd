@@ -1707,13 +1707,14 @@ class PruneProducedRecords(Task):
         staged and nothing is merged" out of one failed listing and delete every record of the
         point, i.e. re-produce an era because a storage endpoint blinked.
 
-        `exists()` cannot be asked, and that is the trap: the gfal interface answers it by listing
-        the *parent* with `silent=True` (`dsprod/law_gfal.py`), which turns a failed `gfal-ls` into
-        an empty listing, caches the negative and marks the ancestors absent -- a blink and an
-        absence are then the same answer. `listdir()` raises instead, and the one piece of evidence
-        for absence that cannot be a blink is a *successful* listing of the parent that does not
-        carry this directory. When even that cannot be read, the error propagates: refusing to
-        prune costs another merge attempt, pruning wrongly costs an era.
+        A failed listing no longer reads as an empty one -- `gfal_ls_checked` retries and then
+        raises, and only gfal's own "no such file or directory" counts as absence -- so `exists()`
+        would no longer answer a blink with "no". It is still not what this asks, for a second
+        reason: it answers an unknown file from a cached listing of its directory, so it can be as
+        old as the cache allows, and the evidence wanted here is a *successful* listing of the
+        parent that does not carry this directory, taken now. `listdir()` gives exactly that, and
+        when even it cannot be read the error propagates: refusing to prune costs another merge
+        attempt, pruning wrongly costs an era.
         """
         try:
             return set(dir_target.listdir())

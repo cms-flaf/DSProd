@@ -9,6 +9,7 @@ optional cache-server (``RemotePathCache``/``pathCacheClient``) is not vendored.
 import os
 import sys
 import time
+import weakref
 
 from law.target.remote.interface import RemoteFileInterface
 
@@ -16,12 +17,28 @@ from .grid_tools import (
     get_voms_proxy_info,
     GfalError,
     gfal_copy_safe,
-    gfal_ls_safe,
+    gfal_ls_checked,
     gfal_rm,
     gfal_stat,
     gfal_exists,
 )
 from .tools import repeat_until_success
+
+
+def expire_path_caches():
+    """Forget every cached listing, so the next question is put to the storage.
+
+    `exists()` answers an unknown file from a cached listing of its directory, which is what makes
+    a completeness check over thousands of branches affordable. The same shortcut makes a file
+    written *after* that listing read as absent for as long as the entry is valid -- 600 s against
+    a 5 min poll -- so anything that turns such an answer into a verdict has to start from a
+    listing it knows is newer than what it is judging. Returns the number of caches emptied.
+    """
+    expired = 0
+    for fs in list(GFALFileInterface._instances):
+        fs.path_cache.clear()
+        expired += 1
+    return expired
 
 
 class PathCacheEntry:
@@ -59,7 +76,7 @@ class PathCache:
             for parent in self._iter_parents(path):
                 pentry = self.cache.get(parent)
                 if pentry is not None and pentry.exists is False:
-                    del self.cache[parent]
+                    self.cache.pop(parent, None)
 
     def set_local(self, path, exists):
         self.set(path, exists)
@@ -77,7 +94,7 @@ class PathCache:
         if entry is not None:
             if entry.is_valid():
                 return entry.exists, True
-            del self.cache[path]
+            self.cache.pop(path, None)
         # Directory-negative inference: if the nearest cached ancestor directory does not
         # exist, then this path cannot exist either.
         for parent in self._iter_parents(path):
@@ -85,7 +102,7 @@ class PathCache:
             if pentry is None:
                 continue
             if not pentry.is_valid():
-                del self.cache[parent]
+                self.cache.pop(parent, None)
                 continue
             if pentry.exists is False:
                 return False, True
@@ -95,22 +112,31 @@ class PathCache:
     def get_many(self, paths):
         return {path: self.get(path)[0] for path in paths}
 
+    def clear(self):
+        """Forget every entry. `pop` and not `del` at the call sites, so a clear during a lookup
+        cannot turn into a KeyError."""
+        self.cache.clear()
+
     def invalidate(self, path):
         to_remove = []
         for p in self.cache:
             if path.startswith(p):
                 to_remove.append(p)
         for p in to_remove:
-            del self.cache[p]
+            self.cache.pop(p, None)
 
 
 class GFALFileInterface(RemoteFileInterface):
     local_prefix = "file://"
 
+    #: every interface built in this process, so their caches can be expired together
+    _instances = weakref.WeakSet()
+
     def __init__(self, base, local_path_cache_validity_period=60, verbose=0):
         self.voms_token = get_voms_proxy_info()["path"]
         self.path_cache = PathCache(local_path_cache_validity_period)
         self.verbose = verbose
+        GFALFileInterface._instances.add(self)
         super(GFALFileInterface, self).__init__(base=base)
 
     def is_local(self, path):
@@ -243,15 +269,14 @@ class GFALFileInterface(RemoteFileInterface):
                 file=sys.stderr,
             )
         path_uri = self.uri(path, base=base)
-        entries = gfal_ls_safe(
-            path_uri, voms_token=self.voms_token, catch_stderr=True, verbose=0
-        )
+        # `silent` covers a directory that is NOT THERE, not one that could not be reached: a
+        # listing that fails is retried and then raised whatever the caller asked for, because
+        # `exists()` turns "no entries" into "the file does not exist" and every completeness
+        # decision in DSProd is built on that answer.
+        entries = gfal_ls_checked(path_uri, voms_token=self.voms_token, verbose=0)
         if entries is None:
             if not silent:
-                gfal_ls_safe(
-                    path_uri, voms_token=self.voms_token, catch_stderr=False, verbose=1
-                )
-                raise GfalError(f"GFALFileInterface: failed to list directory {path}")
+                raise GfalError(f"GFALFileInterface: directory {path} does not exist")
             entry_names = []
             self.path_cache.set(path_uri, False)
             self._mark_absent_ancestors(path_uri)
@@ -261,10 +286,11 @@ class GFALFileInterface(RemoteFileInterface):
         return entry_names
 
     def _mark_absent_ancestors(self, dir_uri, max_climb=32):
-        # A directory was found absent. Walk upward to record the highest absent ancestor,
-        # so subsequent lookups of the missing subtree are answered from the cache. A negative
-        # cached high up suppresses a large subtree, so each absent ancestor is confirmed with
-        # a second gfal-ls before caching (a single failure may be transient).
+        # A directory was found absent. Walk upward to record the highest absent ancestor, so
+        # subsequent lookups of the missing subtree are answered from the cache. A negative cached
+        # high up suppresses a large subtree, so only a listing that really says "not there" is
+        # cached; a listing that fails stops the climb without recording anything, since the child
+        # was absent whatever its parents turn out to be.
         current = dir_uri
         for _ in range(max_climb):
             parent = os.path.dirname(current)
@@ -273,13 +299,10 @@ class GFALFileInterface(RemoteFileInterface):
             cached, _ = self.path_cache.get(parent)
             if cached is not None:
                 break
-            entries = gfal_ls_safe(
-                parent, voms_token=self.voms_token, catch_stderr=True, verbose=0
-            )
-            if entries is None:
-                entries = gfal_ls_safe(
-                    parent, voms_token=self.voms_token, catch_stderr=True, verbose=0
-                )
+            try:
+                entries = gfal_ls_checked(parent, voms_token=self.voms_token, verbose=0)
+            except GfalError:
+                break
             if entries is None:
                 self.path_cache.set(parent, False)
                 current = parent
