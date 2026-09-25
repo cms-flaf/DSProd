@@ -40,6 +40,7 @@ import law
 import luigi
 from law.job.base import JobInputFile
 
+from .law_gfal import expire_path_caches
 from .site_stats import SiteStats
 from .tools import (
     ResyncExistingBranchesProxy,
@@ -1505,7 +1506,36 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         return {}
 
     def crab_check_job_completeness(self):
-        return False
+        """Believe CRAB's FINISHED only when the branch's products are on `fs_default`.
+
+        CRAB parks a job in `transferring` between the payload exiting and the post-job
+        classifying it, and it parks a payload that exited non-zero there too. law maps that state
+        to FINISHED whenever transfers are skipped -- which they are here, since these jobs stage
+        their own products (`law/contrib/cms/job.py`, `map_status`). A poll that lands inside that
+        window therefore reads a failed job as finished, writes it off with `dummy_job_id` and
+        never queries it again: on 2026-09-18 one poll harvested 113 of them and the run reported
+        `finished: 113` for a production that had produced nothing at all.
+
+        With this on, law checks the branch outputs before accepting FINISHED and demotes a job
+        whose products are missing to FAILED ("branch task(s) incomplete due to missing outputs"),
+        which puts it back in the retry path. Each job is checked once for the whole run: law keeps
+        accepted jobs in `finished_jobs` and skips them at the top of every later iteration.
+
+        law calls this once per poll iteration, after the status query and immediately before it
+        checks the jobs it was told finished -- which is the only moment at which the cached
+        listings can be dropped so that every verdict of this iteration rests on a listing taken
+        *after* the status it is judging. Without that the shortcut in `exists()` (an unknown file
+        in a known directory is absent) answers from a listing up to 600 s old against a 5 min
+        poll, and a record written since would demote a job that really did finish -- one of the 9
+        retries, a wait at the wave gate, and the same stale entry answering the retry's own check.
+        The cost is one listing per output directory per poll, not the ~0.9 s stat per job that
+        confirming each negative would take.
+
+        It is only trustworthy because a failed listing now raises instead of reading as "not
+        there" (`dsprod/law_gfal.py`); without that, a blink would demote just as wrongly.
+        """
+        expire_path_caches()
+        return True
 
     def crab_poll_callback(self, poll_data):
         # The one hook the poll loop calls outside its own error handling, so the one place a

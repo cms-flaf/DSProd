@@ -27,6 +27,23 @@ import law
 import luigi
 
 
+def error_output(data, max_chars=2000):
+    """The tail of a failed command's stderr, for its exception message.
+
+    Without it the only thing an exception carries is a return code, and `gfal-ls` answers "the
+    path is not there" and "I could not reach the endpoint" with the same one -- a distinction
+    the callers of this module have to make.
+    """
+    if not data:
+        return None
+    if isinstance(data, bytes):
+        data = data.decode("utf-8", "replace")
+    text = str(data).strip()
+    if len(text) > max_chars:
+        text = "..." + text[-max_chars:]
+    return text or None
+
+
 class PsCallError(RuntimeError):
     def __init__(self, cmd_str, return_code, additional_message=None):
         msg = f'Error while running "{cmd_str}".'
@@ -144,7 +161,7 @@ def ps_call(
         expected_return_codes is not None
         and proc.returncode not in expected_return_codes
     ):
-        raise PsCallError(cmd_str, proc.returncode)
+        raise PsCallError(cmd_str, proc.returncode, error_output(err))
     if decode:
         if catch_stdout:
             output_decoded = output.decode("utf-8")
