@@ -1525,7 +1525,7 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         checks the jobs it was told finished -- which is the only moment at which the cached
         listings can be dropped so that every verdict of this iteration rests on a listing taken
         *after* the status it is judging. Without that the shortcut in `exists()` (an unknown file
-        in a known directory is absent) answers from a listing up to 600 s old against a 5 min
+        in a directory that was listed is absent) answers from a listing up to 600 s old against a 5 min
         poll, and a record written since would demote a job that really did finish -- one of the 9
         retries, a wait at the wave gate, and the same stale entry answering the retry's own check.
         The cost is one listing per output directory per poll, not the ~0.9 s stat per job that

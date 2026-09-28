@@ -42,10 +42,13 @@ def expire_path_caches():
 
 
 class PathCacheEntry:
-    def __init__(self, path, exists, expiration_time):
+    def __init__(self, path, exists, expiration_time, listed=False):
         self.path = path
         self.exists = exists
         self.expiration_time = expiration_time
+        # True only when this directory's own listing was stored. A directory that was
+        # merely seen as an entry of its parent exists, but its children are unknown.
+        self.listed = listed and exists
 
     def is_valid(self):
         return self.expiration_time >= time.time()
@@ -65,9 +68,21 @@ class PathCache:
             path = parent
             yield path
 
-    def set(self, path, exists):
+    def set(self, path, exists, listed=False):
+        # A parent listing does `set(child_dir, True)` for a directory it saw. That must
+        # not forget that this process already listed that directory: the listing is what
+        # makes an unknown child count as absent.
+        previous = self.cache.get(path)
+        if (
+            previous is not None
+            and previous.is_valid()
+            and previous.listed
+            and exists
+            and not listed
+        ):
+            listed = True
         self.cache[path] = PathCacheEntry(
-            path, exists, time.time() + self.validity_period
+            path, exists, time.time() + self.validity_period, listed=listed
         )
         # If a path exists, every ancestor directory exists too: drop any stale negative
         # ancestor entry that would otherwise (via directory-negative inference in get())
@@ -85,9 +100,10 @@ class PathCache:
         for item in items:
             path = os.path.join(base_dir, item)
             self.set(path, True)
-        # Mark the directory itself as existing so lookups of absent siblings can be
-        # answered from this cached listing without an extra round-trip.
-        self.set(base_dir, True)
+        # The directory itself was listed, so a later lookup of a name that was not in
+        # `items` is absent. `listed=True` is what distinguishes that from merely knowing
+        # the directory exists because its parent was listed.
+        self.set(base_dir, True, listed=True)
 
     def get(self, path):
         entry = self.cache.get(path)
@@ -108,6 +124,17 @@ class PathCache:
                 return False, True
             break
         return None, True
+
+    def was_listed(self, path):
+        """Whether `path` is a directory whose own listing is still cached.
+
+        Knowing the directory exists is not enough: it may only have been seen as one
+        entry while listing its parent.
+        """
+        entry = self.cache.get(path)
+        return (
+            entry is not None and entry.is_valid() and entry.exists and entry.listed
+        )
 
     def get_many(self, paths):
         return {path: self.get(path)[0] for path in paths}
@@ -154,11 +181,10 @@ class GFALFileInterface(RemoteFileInterface):
         dir_uri = self.uri(path_dir, base=base)
         result = False
         cached_result, from_local_cache = self.path_cache.get(path_uri)
-        if cached_result is None:
-            cached_dir_result, from_local_cache = self.path_cache.get(dir_uri)
-            if cached_dir_result is not None:
-                cached_result = False
-                self.path_cache.set_local(path_uri, False)
+        if cached_result is None and self.path_cache.was_listed(dir_uri):
+            # The directory was listed and this name was not in it.
+            cached_result = False
+            self.path_cache.set_local(path_uri, False)
         use_cache = cached_result is not None
 
         if use_cache:

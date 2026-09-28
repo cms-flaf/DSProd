@@ -147,6 +147,33 @@ class TheInterface(unittest.TestCase):
         cached, _ = self.fs.path_cache.get(self.fs.uri("some/dir/file.txt"))
         self.assertIs(cached, False, "a real absence must stay cheap to re-ask")
 
+    def test_seeing_a_directory_in_its_parent_does_not_hide_the_files_inside_it(self):
+        # A missing nano record lists ancestors. `XHHbbtautau/` contains `premix/`, so
+        # that directory exists, but its contents were not listed. The premix list that
+        # is already on storage must still be found; declaring every unlisted name
+        # absent is what sent every CRAB job into the DAS guard (2026-09-28).
+        calls = []
+
+        def ls(uri, **kwargs):
+            calls.append(uri)
+            if uri.endswith("/XHHbbtautau"):
+                return [Entry("gridpacks"), Entry("premix")]
+            if uri.endswith("/premix"):
+                return [Entry("Run3_2022.txt")]
+            return None
+
+        with mock.patch.object(law_gfal, "gfal_ls_checked", side_effect=ls):
+            self.assertFalse(
+                self.fs.exists("out/XHHbbtautau/produced/nano/missing.json")
+            )
+            self.assertTrue(
+                self.fs.exists("out/XHHbbtautau/premix/Run3_2022.txt")
+            )
+        self.assertTrue(
+            any(uri.endswith("/premix") for uri in calls),
+            f"premix/ was never listed, calls={calls}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

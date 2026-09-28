@@ -86,9 +86,9 @@ class Entry:
 class FakeStorage:
     """What the endpoint would answer, keyed by directory URI.
 
-    Only the `gfal-ls` call is faked. The cache, the "unknown file in a known directory is absent"
-    shortcut and the ancestor bookkeeping above it are the real ones, because they are what decides
-    the verdict.
+    Only the `gfal-ls` call is faked. The cache, the "unknown file in a directory that was
+    listed is absent" shortcut and the ancestor bookkeeping above it are the real ones,
+    because they are what decides the verdict.
     """
 
     def __init__(self):
