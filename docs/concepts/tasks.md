@@ -91,6 +91,12 @@ way. The list is identical to what a successful DAS query returns, so nothing ab
 changes; it is stored in the production area (not `<output>_test`) because it depends only on the
 era, and a batch node refuses to build one — that query belongs on the submitting machine.
 
+Seeing `premix/` while listing the production directory only means that directory exists.
+It is not a listing of the files inside it: a job that has just looked for its own, not
+yet written, nano record must still find `<era>.txt` there. Treating every name that
+listing did not mention as absent made every CRAB job try to rebuild the list and die
+on the guard above.
+
 ### `RunProd`
 
 The core production task: a fused GEN→…→MiniAOD→NanoAOD chain for one `(era, point, seed)`, run
