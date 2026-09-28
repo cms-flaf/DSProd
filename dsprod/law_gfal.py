@@ -132,9 +132,7 @@ class PathCache:
         entry while listing its parent.
         """
         entry = self.cache.get(path)
-        return (
-            entry is not None and entry.is_valid() and entry.exists and entry.listed
-        )
+        return entry is not None and entry.is_valid() and entry.exists and entry.listed
 
     def get_many(self, paths):
         return {path: self.get(path)[0] for path in paths}

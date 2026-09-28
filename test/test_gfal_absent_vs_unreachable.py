@@ -166,9 +166,7 @@ class TheInterface(unittest.TestCase):
             self.assertFalse(
                 self.fs.exists("out/XHHbbtautau/produced/nano/missing.json")
             )
-            self.assertTrue(
-                self.fs.exists("out/XHHbbtautau/premix/Run3_2022.txt")
-            )
+            self.assertTrue(self.fs.exists("out/XHHbbtautau/premix/Run3_2022.txt"))
         self.assertTrue(
             any(uri.endswith("/premix") for uri in calls),
             f"premix/ was never listed, calls={calls}",
