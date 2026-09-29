@@ -7,6 +7,11 @@ stable set of functions below is needed. Keep in sync with the originals:
   - update_kerberos_ticket (FLAF name: update_kinit)    <- FLAF/RunKit/kinit.py
   - get_voms_proxy_info                                <- FLAF/RunKit/grid_tools.py
   - CreateVomsProxy                              <- FLAF/RunKit/grid_helper_tasks.py
+
+`get_voms_proxy_info` passes `-dont-verify-ac`. The FLAF original does not: a
+worker whose CRL for cms-auth.cern.ch is stale otherwise exits 1 on a usable
+proxy (2026-09-29). Keep the flag when re-syncing this copy.
+
 Remote file I/O reuses FLAF's gfal-CLI file interface (dsprod/grid_tools.py +
 dsprod/law_gfal.py + dsprod/law_wlcg.py), so it works on grid (CRAB) workers where
 the gfal2 python module is unavailable but the gfal-* CLIs are.
@@ -303,7 +308,21 @@ def timed_call_wrapper(fn, update_interval, verbose=0):
 
 
 def get_voms_proxy_info():
-    _, output, _ = ps_call(["voms-proxy-info"], catch_stdout=True, split="\n")
+    """Path and remaining lifetime of the current proxy.
+
+    `-dont-verify-ac` skips the attribute-certificate check. `voms-proxy-info`
+    exits 1 when it cannot verify the AC, which on a worker is usually a stale
+    CRL for cms-auth.cern.ch while stdout still describes a usable proxy.
+    `RunProd.output()` calls this while building targets, so that exit aborts
+    the job before any work. A missing or unreadable proxy still exits
+    non-zero with empty stdout and still raises, with stderr in the exception.
+    """
+    _, output, _ = ps_call(
+        ["voms-proxy-info", "-dont-verify-ac"],
+        catch_stdout=True,
+        catch_stderr=True,
+        split="\n",
+    )
     info = {}
     for line in output:
         if len(line) == 0:
