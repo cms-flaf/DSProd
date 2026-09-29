@@ -145,7 +145,10 @@ where DSProd will look, whatever the shell already had.
     On a worker node DSProd takes whatever proxy the batch system put in `$X509_USER_PROXY` and
     never renews or removes it: `voms-proxy-init` cannot run unattended there, and CRAB's
     delegated proxy lives for slightly under 24 hours — shorter than the renewal threshold that
-    applies interactively.
+    applies interactively. Reading it skips VOMS attribute-certificate verification
+    (`voms-proxy-info -dont-verify-ac`). A stale CRL for `cms-auth.cern.ch` makes that command
+    exit 1 on an otherwise usable proxy, and that exit aborts the job while its targets are
+    being built.
 
 ### The MyProxy credential CRAB needs
 
