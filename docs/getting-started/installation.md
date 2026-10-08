@@ -105,9 +105,58 @@ on `PATH` and no `ANALYSIS_PATH`, which surfaces as `task 'NanoMergeTask' not fo
 
 Sourcing `env.sh` sets up LAW and a Python/ROOT stack. It does **not** build CMSSW — the
 per-era releases are installed later, on demand, by the [`InstallCMSSW`](../concepts/tasks.md)
-task. The first time you source it on lxplus, `env.sh` also vendors a pure-python copy of
-`law`/`luigi` into `soft/vendor` (used by the [CRAB backend](../concepts/backends.md) on grid
-workers).
+task. The first time you source it on lxplus, `env.sh` builds the driver venv `soft/dsprod_env`
+and vendors a pure-python copy of `law`/`luigi` into `soft/vendor` (used by the
+[CRAB backend](../concepts/backends.md) on grid workers).
+
+### The law release
+
+DSProd runs with exactly one law release, **0.1.21**: its CRAB layer overrides law's job manager
+and status parsing, which change between releases. The pin is `law_version` in `env.sh`, and
+importing DSProd with any other law stops at once with
+`DSProd needs law 0.1.21, but law <version> was imported from <path>`.
+
+An existing checkout is brought to the pin the next time `env.sh` is sourced: it reads the law
+release out of `soft/dsprod_env` and out of `soft/vendor`, each on its own, and **rebuilds** from
+scratch each directory that holds another release. Both are compared with the same pin, so the
+vendored copy that CRAB workers receive always matches the law the driver renders their job
+scripts with. That takes a minute or two and needs PyPI. `soft/vendor` is filled in a sibling
+directory and moved into place only once `pip` has succeeded, so an interrupted build never leaves
+a half-filled copy where the CRAB code tarball is made from; the next source removes the leftover
+and starts again. The venv cannot be moved: it is rebuilt in place and marked finished last. If a
+step that either build depends on fails — installing law, creating the venv, a rename — sourcing
+stops there with an `ERROR:` line and no `env.sh done!`, in a background shell too, and the next
+source tries again.
+
+A batch job never builds them: an HTCondor job that finds either directory missing, unfinished or
+holding another release stops with an error asking for `env.sh` to be sourced on the submitting
+machine, rather than run `venv` and `pip` into a directory that other jobs — or the rebuild itself
+— are using. If `env.sh` cannot tell which release a directory holds, it stops with an error and
+leaves the directory alone; remove it by hand to rebuild it.
+
+#### Upgrading an area in use
+
+A checkout that runs a production is upgraded in this order:
+
+1. **Stop the driver** — every `law run` that uses the checkout.
+2. **Empty its HTCondor queue**: remove its idle jobs (`condor_rm`), and remove its running ones
+   too or wait for them to end — a job that starts during the rebuild fails, and one running
+   through it can lose the venv it runs from. CRAB tasks may keep running: each carries its own
+   code tarball, vendored law included.
+3. **Pull** the new DSProd and update its submodules, as in
+   [Clone the repository](#clone-the-repository).
+4. **Source `env.sh` once**, on the submitting machine, in one shell at a time: a second shell
+   sourcing it during the rebuild would remove the copy of `soft/vendor` the first is filling, and
+   rebuild the venv under it. It rebuilds `soft/dsprod_env`, re-vendors `soft/vendor` and ends
+   with `env.sh done!`.
+5. **Resume**: start the same `law run` again; it picks its submissions up where they stopped (see
+   [Resuming a production](../concepts/backends.md#resuming-a-production-both-batch-backends)).
+
+The order matters because between the pull and the re-vendoring the checkout holds the new code
+next to the old vendored law. A CRAB workflow that builds its code tarball in that window ships
+both, and every job of the task fails at import with `DSProd needs law 0.1.21, but law 0.1.20 was
+imported`. HTCondor jobs that start in the window, or during the rebuild, stop at `env.sh` with an
+error and are retried by law, each spending one of its retries.
 
 After sourcing you can list the available tasks:
 

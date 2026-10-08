@@ -31,6 +31,8 @@ from threading import Timer
 import law
 import luigi
 
+from . import law_version  # noqa: F401 -- refuses any law release but the pinned one
+
 
 def error_output(data, max_chars=2000):
     """The tail of a failed command's stderr, for its exception message.

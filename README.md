@@ -32,6 +32,7 @@ dsprod/
   gridpack_store.py  sparse/LFS access to the gridpacks store (on-demand materialization)
   processes/base.py  ProcessCustomization ABC (models themselves live in models)
   tools.py         utilities vendored from FLAF/RunKit (ps_call, voms proxy, kerberos, retries)
+  law_version.py   the one law release DSProd runs with, refused at import otherwise
   grid_tools.py / law_gfal.py / law_wlcg.py
                    FLAF's gfal-CLI remote-file interface (works on WLCG workers, where the
                    gfal2 python module law.contrib.gfal needs is unavailable)
@@ -80,8 +81,13 @@ Storage area and CRAB site/resource settings are **not** in the setup — they l
 
 CRAB notes: DSProd owns all output/log I/O (products go to the storage area via the gfal-CLI
 interface), so CRAB's own stageout/logs are forced off. WLCG workers have no AFS, so the code is
-shipped in the CRAB `inputFiles` tarball and law/luigi are vendored (`soft/vendor`, built once by
-`env.sh`) so the worker needs no PyPI.
+shipped in the CRAB `inputFiles` tarball and law/luigi are vendored (`soft/vendor`, built by
+`env.sh`) so the worker needs no PyPI. law is pinned to 0.1.21 (`law_version` in `env.sh`,
+checked at import by `dsprod/law_version.py`); sourcing `env.sh` rebuilds `soft/dsprod_env` and
+`soft/vendor` whenever they hold another release, and a batch job never builds them. An area
+that runs a production is upgraded with its driver stopped and its HTCondor queue empty, then
+pulled, then `env.sh` sourced once, then resumed — in that order, or a CRAB tarball built meanwhile
+ships the new code with the old vendored law ([installation guide](https://cms-flaf.github.io/DSProd/getting-started/installation/#upgrading-an-area-in-use)).
 
 Full architecture and the McM-sourced per-era conditions: see the FLAF_all design doc
 `CLAUDE/reviews/2026-08-12_dsprod-mc-production-architecture.md`.

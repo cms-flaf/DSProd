@@ -81,6 +81,134 @@ install_cmssw() {
   run_cmd $env_cmd $env_cmd_args /usr/bin/env -i HOME=$HOME bash "$this_file" install_cmssw $scram_arch $cmssw_version $target_os $inst_type
 }
 
+# The law release installed in a site-packages or `pip --target` directory, read off its dist-info
+# name without importing anything; empty when there is none. Fails when the directory cannot be
+# listed, so that storage which does not answer is never taken for an outdated install.
+_dsprod_law_in() {
+  local listing
+  listing="$(command ls -1 "$1")" || return 1
+  printf '%s\n' "$listing" | sed -n 's/^law-\(.*\)\.dist-info$/\1/p'
+}
+
+# Fails inside a law batch job (law exports LAW_JOB_HOME before the bootstrap sources this file):
+# HTCondor jobs source the shared checkout's env.sh, and a pin pulled while they run would have
+# every job that starts delete and rebuild the environment the others are running from.
+_dsprod_may_rebuild() {
+  [ -z "$LAW_JOB_HOME" ] && return 0
+  echo "ERROR: $1 holds law ${2:-<none>}, DSProd needs $3, and a batch job does not rebuild what other jobs share. Source env.sh on the submitting machine first." >&2
+  return 1
+}
+
+# Fails inside a law batch job when a directory is missing or unfinished. A rebuild started on the
+# submitting machine leaves it so for a minute or two, and a job building it too would run venv
+# and pip into the same directory at once, which can leave a venv that is broken and still looks
+# finished.
+_dsprod_may_build() {
+  [ -z "$LAW_JOB_HOME" ] && return 0
+  echo "ERROR: $1 is missing or unfinished, and a batch job does not build what other jobs share. Source env.sh on the submitting machine and resubmit; a job that starts while env.sh rebuilds it fails with this error and law retries it." >&2
+  return 1
+}
+
+# lxplus: law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's
+# WLCG targets use the system gfal2 (+ its working http/Davix plugin for davs://). Self-contained,
+# avoids the LCG/gfal library conflicts. Built once, guarded by .installed (written last), and
+# rebuilt from scratch when it holds another law release than $2, which .installed does not tell.
+# The steps that must succeed before .installed is written are checked here rather than through
+# run_cmd: run_cmd stops the sourcing shell by interrupting it, and a shell that ignores SIGINT
+# -- any `cmd &` run where job control is off, such as from a script, `setsid nohup ... &`
+# included -- goes on past the failure.
+_dsprod_driver_env() {
+  local dsprod_env="$1" law_version="$2" site installed
+  if [ -f "$dsprod_env/.installed" ]; then
+    if ! site="$("$dsprod_env/bin/python3" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+        || ! installed="$(_dsprod_law_in "$site")"; then
+      echo "ERROR: cannot tell which law $dsprod_env holds, so it is left as it is. Remove it to rebuild it." >&2
+      return 1
+    fi
+    if [ "$installed" != "$law_version" ]; then
+      _dsprod_may_rebuild "$dsprod_env" "$installed" "$law_version" || return 1
+      echo "soft/dsprod_env holds law ${installed:-<none>}, DSProd needs $law_version: rebuilding it ..."
+      rm -rf "$dsprod_env" || {
+        echo "ERROR: cannot remove $dsprod_env to rebuild it. Remove it by hand and source env.sh again." >&2
+        return 1
+      }
+    fi
+  fi
+  if [ ! -f "$dsprod_env/.installed" ]; then
+    _dsprod_may_build "$dsprod_env" || return 1
+    echo "Creating dsprod_env (law + luigi) ..."
+    /usr/bin/python3 -m venv --system-site-packages "$dsprod_env" || {
+      echo "ERROR: creating the venv $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+      return 1
+    }
+    source "$dsprod_env/bin/activate"
+    run_cmd pip install --quiet --upgrade pip
+    # --ignore-installed, because --system-site-packages otherwise hides the problem: pip
+    # resolves luigi's own dependencies (typing_extensions, tenacity, ...) against lxplus's
+    # copies and leaves them out of the venv. An HTCondor worker image does not ship them, so
+    # law cannot be imported in the job and law_job.sh stops with the unhelpful "law not found
+    # ... should be made available in bootstrap file". The system packages are still there for
+    # what they are wanted for -- gfal2 is not a dependency of law or luigi.
+    pip install --quiet --ignore-installed luigi==3.7.3 "law==$law_version" || {
+      echo "ERROR: installing law + luigi into $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+      return 1
+    }
+    touch "$dsprod_env/.installed"
+  else
+    source "$dsprod_env/bin/activate"
+  fi
+}
+
+# Vendor pure-python law + luigi (+ deps) so grid-worker jobs can ship them in the code tarball
+# (workers have no PyPI and a too-old system python), from the venv's pip; the compiled tornado
+# speedup is dropped so it stays arch-independent (pure-python fallback). Vendored again from
+# scratch when it holds another law release than $2: the driver's law renders the job scripts this
+# copy runs on the worker, and `pip --target` does not replace what is already there. Built in a
+# sibling directory and moved into place only once pip has succeeded: a `pip --target` cut short
+# can leave law's dist-info without the rest, which the next source would take for a finished
+# copy and CRAB would ship. An interrupted build leaves only that sibling, removed by the next one.
+# Each step up to the last rename is checked here rather than through run_cmd, as in
+# _dsprod_driver_env: run_cmd does not stop a shell that ignores SIGINT.
+_dsprod_vendor() {
+  local vendor="$1" law_version="$2" installed="" building="$1.tmp.$$"
+  if [ -e "$vendor" ] && ! installed="$(_dsprod_law_in "$vendor")"; then
+    echo "ERROR: cannot tell which law $vendor holds, so it is left as it is. Remove it to vendor again." >&2
+    return 1
+  fi
+  if [ "$installed" = "$law_version" ]; then
+    return 0
+  fi
+  if [ -e "$vendor" ]; then
+    _dsprod_may_rebuild "$vendor" "$installed" "$law_version" || return 1
+    echo "soft/vendor holds law ${installed:-<none>}, DSProd needs $law_version: vendoring it again ..."
+  else
+    _dsprod_may_build "$vendor" || return 1
+    echo "Vendoring law + luigi into soft/vendor (for grid jobs) ..."
+  fi
+  find "${vendor%/*}" -maxdepth 1 -name "${vendor##*/}.tmp.*" -exec rm -rf {} + || {
+    echo "ERROR: cannot remove what an unfinished vendoring left next to $vendor; $vendor is left as it was." >&2
+    return 1
+  }
+  pip install --quiet --target "$building" luigi==3.7.3 "law==$law_version" || {
+    echo "ERROR: vendoring law + luigi failed; $vendor is left as it was." >&2
+    return 1
+  }
+  find "$building" -name "*.so" -delete 2> /dev/null
+  # the old copy is renamed aside rather than removed first, so that soft/vendor is missing only
+  # between two renames rather than for as long as removing it takes
+  if [ -e "$vendor" ]; then
+    mv "$vendor" "$building.old" || {
+      echo "ERROR: cannot move $vendor aside to replace it; it is left as it was." >&2
+      return 1
+    }
+  fi
+  mv "$building" "$vendor" || {
+    echo "ERROR: cannot move the new vendored copy into $vendor, which is missing until env.sh is sourced again." >&2
+    return 1
+  }
+  run_cmd rm -rf "$building.old"
+}
+
 action() {
   local this_file="$( [ ! -z "$ZSH_VERSION" ] && echo "${(%):-%x}" || echo "${BASH_SOURCE[0]}" )"
   local this_dir="$( cd "$( dirname "$this_file" )" && pwd )"
@@ -113,34 +241,11 @@ action() {
     export PYTHONPATH="$this_dir/soft/vendor:$PYTHONPATH"
     echo "grid env: python3=$(command -v python3) ($(python3 --version 2>&1)), vendored law/luigi on PYTHONPATH"
   else
-    # lxplus: law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's
-    # WLCG targets use the system gfal2 (+ its working http/Davix plugin for davs://). Self-contained,
-    # avoids the LCG/gfal library conflicts; built once, guarded by .installed.
-    local dsprod_env="$this_dir/soft/dsprod_env"
-    if [ ! -f "$dsprod_env/.installed" ]; then
-      echo "Creating dsprod_env (law + luigi) ..."
-      run_cmd /usr/bin/python3 -m venv --system-site-packages "$dsprod_env"
-      source "$dsprod_env/bin/activate"
-      run_cmd pip install --quiet --upgrade pip
-      # --ignore-installed, because --system-site-packages otherwise hides the problem: pip
-      # resolves luigi's own dependencies (typing_extensions, tenacity, ...) against lxplus's
-      # copies and leaves them out of the venv. An HTCondor worker image does not ship them, so
-      # law cannot be imported in the job and law_job.sh stops with the unhelpful "law not found
-      # ... should be made available in bootstrap file". The system packages are still there for
-      # what they are wanted for -- gfal2 is not a dependency of law or luigi.
-      run_cmd pip install --quiet --ignore-installed luigi==3.7.3 law
-      touch "$dsprod_env/.installed"
-    else
-      source "$dsprod_env/bin/activate"
-    fi
-    # Vendor pure-python law + luigi (+ deps) so grid-worker jobs can ship them in the code
-    # tarball (workers have no PyPI and a too-old system python). Built once from the venv's pip;
-    # the compiled tornado speedup is dropped so it stays arch-independent (pure-python fallback).
-    if [ ! -d "$this_dir/soft/vendor/law" ]; then
-      echo "Vendoring law + luigi into soft/vendor (for grid jobs) ..."
-      run_cmd pip install --quiet --target "$this_dir/soft/vendor" luigi==3.7.3 law==0.1.20
-      find "$this_dir/soft/vendor" -name "*.so" -delete 2> /dev/null
-    fi
+    # the one law release DSProd runs with, on the driver and, vendored, on grid workers;
+    # dsprod/law_version.py refuses any other at import
+    local law_version="0.1.21"
+    _dsprod_driver_env "$this_dir/soft/dsprod_env" "$law_version" || return 1
+    _dsprod_vendor "$this_dir/soft/vendor" "$law_version" || return 1
   fi
 
   if [ ! -z $ZSH_VERSION ]; then

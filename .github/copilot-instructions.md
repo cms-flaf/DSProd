@@ -80,6 +80,22 @@ group, and a listing that *failed* is not an empty listing. `exists()` answers b
 parent and caching the result, so that distinction has to survive the listing itself: it does
 because `gfal_ls_checked` raises rather than returning "empty" when it cannot reach the endpoint.
 
+### law is pinned to one release
+
+`dsprod/crab.py` overrides law's CRAB job manager and its status parsing, which change between
+releases without an error: law 0.1.21 renamed `proxy` to `proxy_file` and began answering
+`WAITING on command SUBMIT` and `SUBMITFAILED` itself. DSProd therefore runs with exactly one law
+release, the same in three places — `law_version` in `env.sh` (driver venv and the vendored copy
+shipped to CRAB workers), `LAW_VERSION` in `dsprod/law_version.py` (refused at import otherwise),
+and the pin in `.github/workflows/unit-tests.yaml`. Flag a diff that changes one of them alone, or
+that adds a version branch or a `getattr`/`try` fallback to keep another release working. Inside a
+law batch job (`LAW_JOB_HOME` set) `env.sh` never builds or rebuilds `soft/dsprod_env` or
+`soft/vendor`, and `soft/vendor` is filled in a sibling directory and moved into place whole; flag
+a diff that lets a job build either, or that runs `pip --target` straight into `soft/vendor`. The
+steps that must succeed before either directory counts as finished check their own exit status
+rather than run through `run_cmd`, which does not stop a shell that ignores SIGINT (any `cmd &`
+from a script); flag a diff that moves one back.
+
 ### Registry and processes
 
 `dsprod/registry.py` and `dsprod/processes/` map a setup onto the steps that implement it. A
@@ -113,12 +129,13 @@ repository and needs its own PR.
 
 ## Repository facts
 
-Verified 2026-08-27; re-check before relying on any of it.
+Verified 2026-08-27 (layout and law pin 2026-10-08); re-check before relying on any of it.
 
 | | |
 |---|---|
-| Layout | `dsprod/` (`tasks.py`, `run_step.py`, `registry.py`, `config.py`, `crab.py`, `gridpack_store.py`, `law_gfal.py`, `law_wlcg.py`, `grid_tools.py`, `site_stats.py`, `processes/`), `config/`, `run_tools/` (`check_conditions.py`, `apply_format.sh`), `docs/`, `env.sh`, `setup_gridpacks.sh` |
+| Layout | `dsprod/` (`tasks.py`, `run_step.py`, `registry.py`, `config.py`, `crab.py`, `gridpack_store.py`, `law_gfal.py`, `law_wlcg.py`, `grid_tools.py`, `site_stats.py`, `watchdog.py`, `tools.py`, `law_version.py`, `processes/`), `config/`, `run_tools/` (`check_conditions.py`, `apply_format.sh`), `docs/`, `env.sh`, `setup_gridpacks.sh` |
+| law | 0.1.21 exactly (see "law is pinned to one release") |
 | Submodules | `models` (`cms-flaf/DSProdModels`), `genproductions_scripts` (CERN GitLab), `gridpacks` (`cms-flaf/DSProdGridpacks`, **sparse LFS — use `setup_gridpacks.sh`**) |
 | Configs | `config/global.yaml`, `config/conditions_Run3.yaml`, `config/law.cfg`. `config/user_custom.yaml` is the per-user override, layered on top of `global.yaml` and **gitignored** — a PR must never add it |
-| Workflows | `formatting-check`, `repo-sanity-checks`, `conditions-check` (also scheduled weekly), `deploy-docs` |
+| Workflows | `unit-tests`, `formatting-check`, `repo-sanity-checks`, `conditions-check` (also scheduled weekly), `deploy-docs` |
 | Docs | `docs/` with `mkdocs.yml`; verify with `mkdocs build --strict` |

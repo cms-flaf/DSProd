@@ -23,6 +23,7 @@ jobs:
         with:
           python-version: "3.x"
       - name: Install law, luigi and PyYAML
-        run: pip install law luigi pyyaml
+        # law at the release dsprod/law_version.py requires, which env.sh installs
+        run: pip install law==0.1.21 luigi pyyaml
       - name: Run the unit tests
         run: python -m unittest discover -s test -v

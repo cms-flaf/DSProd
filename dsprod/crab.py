@@ -332,6 +332,24 @@ class CrabTaskNotScheduledYet(Exception):
         )
 
 
+class CrabTaskSubmitFailed(Exception):
+    """A task the CRAB server failed to submit, carrying law's verdict on its jobs.
+
+    law reports every job of such a task failed and resubmits them as a new task; `jobs` is that
+    result, returned unchanged. It is raised only so that `query` can count the task without
+    re-parsing the response, as for a refusal.
+    """
+
+    def __init__(self, failure, proj_dir, jobs):
+        self.failure = failure
+        self.proj_dir = proj_dir
+        self.jobs = jobs
+        super(CrabTaskSubmitFailed, self).__init__(
+            f"the CRAB server failed to submit {os.path.basename(str(proj_dir))} "
+            f"(SUBMITFAILED): {failure or 'no failure message from the server'}"
+        )
+
+
 class DSProdCrabJobManager(law.cms.CrabJobManager):
     """CRAB job manager that rides out a status response it cannot read.
 
@@ -376,6 +394,9 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         #: project dirs of *this run's* submissions the server refused, counted once each: polling
         #: one refused task ten times is one refused submission, not ten
         self._refused_projects = set()
+        #: proj_dir -> server failure message of *this run's* submissions that ended SUBMITFAILED,
+        #: counted once each like the refusals
+        self._failed_submissions = {}
         #: proj_dir -> consecutive polls the task has been accepted but not scheduled
         self._unscheduled = {}
         #: why the run must stop, read and raised by the poll callback. Raising from `query` does
@@ -395,19 +416,22 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
     #: TaskWorker when it rejects the request outright -- an unknown site name in the whitelist, say
     #: -- and it is absorbing: the TaskWorker only ever picks up `HOLDING`, and `crab resubmit` and
     #: even `crab kill` refuse a task in it. Polling it again can only repeat, so it is reported as
-    #: a failure of its jobs instead, which law retries into a fresh task. `SUBMITFAILED` is the
-    #: An explicit list, never "whatever law will not accept": law 0.1.20 does not accept
-    #: `WAITING` either, and that is every task's first status. `SUBMITFAILED` is deliberately
-    #: absent -- that is the TaskWorker or the schedd failing rather than refusing, i.e. the
-    #: transient class, which the retry path already handles.
+    #: a failure of its jobs instead, which law retries into a fresh task. An explicit list, never
+    #: "whatever law will not accept": law rejects `WAITING` on any command but `SUBMIT` too.
     terminal_server_states = ("SUBMITREFUSED",)
 
-    #: statuses meaning "accepted, but not on a scheduler yet" that law 0.1.20 does not know. Every
-    #: task now enters the CRAB database as `WAITING` (`CRABInterface/DataWorkflow.py`) and is
-    #: promoted later, so without this a perfectly healthy submission spends `query_retries` x
-    #: `query_retry_delay` seconds being retried and counts against `max_unreadable_polls` -- and a
-    #: backlogged TaskWorker, i.e. several productions submitting at once, is exactly when a task
-    #: lingers there.
+    #: server statuses of a task the TaskWorker or the schedd failed to submit, rather than refused.
+    #: law itself reports every job of such a task failed, with the server's failure message, and
+    #: resubmits them as a new task -- the right recovery for a failure that does not repeat. A
+    #: cause that does -- a MyProxy credential the TaskWorker cannot retrieve, say -- fails every
+    #: new task the same way, so these are counted against `max_failed_submissions`.
+    failed_server_states = ("SUBMITFAILED",)
+
+    #: statuses meaning "accepted, but not on a scheduler yet". Every task enters the CRAB database
+    #: as `WAITING` (`CRABInterface/DataWorkflow.py`), printed as `WAITING on command SUBMIT`, and is
+    #: promoted later -- and a backlogged TaskWorker, i.e. several productions submitting at once, is
+    #: exactly when a task lingers there. law reports the jobs of such a task pending itself, but
+    #: without any bound, and it still rejects `WAITING` on other commands; both are counted here.
     pending_server_states = ("WAITING",)
 
     #: polls a task may spend unscheduled before the run is stopped. The point of accepting the
@@ -424,6 +448,14 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
     #: here, so a second one on a freshly read list is a configuration fault. Retrying instead
     #: would spend every branch's attempts on the same verdict and end in "acceptance not reached".
     max_refused_submissions = 2
+
+    #: distinct submissions of this run the server may fail to submit before the run is stopped,
+    #: counted over the whole run rather than in a row. One is a TaskWorker or a schedd having a
+    #: bad moment, and law's resubmission recovers it; a second is taken to mean the cause is still
+    #: there, since each further task spends a retry of every branch. Two tasks in flight that hit
+    #: the same transient failure at once are two as well, so they stop the run too, although
+    #: law's resubmission would have recovered both.
+    max_failed_submissions = 2
 
     @classmethod
     def server_status(cls, out):
@@ -457,6 +489,27 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             if line.strip().startswith("Warning:")
         ]
 
+    @classmethod
+    def server_failure(cls, out):
+        """The `Failure message from server` of a status response, matched as law matches it."""
+        for line in (out or "").replace("\r", "").split("\n"):
+            match = cls.query_server_failure_cre.match(line)
+            if match:
+                return match.group(1).strip()
+        return None
+
+    @classmethod
+    def publishes_per_job_states(cls, out):
+        """Whether law reads per-job states out of a status response, decided as law decides it.
+
+        Without both a scheduler status line and the per-job JSON line, law gives every job the
+        one state the server status implies -- or raises, for a status it does not expect.
+        """
+        lines = (out or "").replace("\r", "").split("\n")
+        return any(
+            cls.query_scheduler_status_cre.match(line) for line in lines
+        ) and any(cls.query_json_line_cre.match(line) for line in lines)
+
     def submit(self, *args, **kwargs):
         """Submit, and remember the task that came of it.
 
@@ -481,13 +534,16 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
         head of it -- the status lines live in the first few lines, and the per-job JSON that
         follows is megabytes, so a slice is enough.
 
-        A task the server has refused, and one it has merely not scheduled yet, are both reported
-        by law as an unreadable status; they are told apart here, on the server status law itself
-        extracted. The test happens only after law has refused the response, so a task that still
-        publishes per-job JSON -- a large `FAILED` or `KILLED` one -- keeps its real job states.
+        A task the server has refused is reported by law as an unreadable status, and so is one
+        `WAITING` on any command but `SUBMIT`; they are told apart here, on the server status law
+        itself extracted. A task `WAITING on command SUBMIT` or `SUBMITFAILED` is answered by law
+        itself -- all pending, all failed -- and is recognised on that answer, so that the wait and
+        the failed submissions are counted. Either way only a response without per-job data is
+        touched: a task that still publishes per-job JSON -- a large `FAILED` or `KILLED` one --
+        keeps its real job states.
         """
         try:
-            return super(DSProdCrabJobManager, cls).parse_query_output(
+            result = super(DSProdCrabJobManager, cls).parse_query_output(
                 out, proj_dir, job_ids, skip_transfers=skip_transfers
             )
         except Exception as exc:
@@ -506,6 +562,13 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
                 f"{exc}\n    first lines of what crab returned ({len(out or '')} bytes):"
                 f"\n      {shown}"
             )
+        if not cls.publishes_per_job_states(out):
+            state = cls.server_state(out)
+            if state in cls.pending_server_states:
+                raise CrabTaskNotScheduledYet(state)
+            if state in cls.failed_server_states:
+                raise CrabTaskSubmitFailed(cls.server_failure(out), proj_dir, result)
+        return result
 
     #: per-site record to feed, injected by CrabWorkflow.crab_create_job_manager; None disables it
     site_stats = None
@@ -693,6 +756,11 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             except CrabTaskNotScheduledYet as exc:
                 # not an error at all, so neither the delay nor the unreadable count applies
                 return self._not_scheduled_yet(exc, proj_dir, job_ids)
+            except CrabTaskSubmitFailed as exc:
+                # law's own verdict -- failed jobs, which it submits as a new task -- is kept, and
+                # only counted on top
+                self._submit_failed(exc, proj_dir)
+                result = exc.jobs
             except Exception as exc:
                 # law raises before the response is parsed when the client exits non-zero, and the
                 # output it read is inside the message: a refusal must be recognised there too, or
@@ -844,6 +912,34 @@ class DSProdCrabJobManager(law.cms.CrabJobManager):
             for job_id in job_ids
         }
 
+    def _submit_failed(self, exc, proj_dir):
+        """Count a task the server failed to submit; the second of this run's stops the run.
+
+        law has already reported its jobs failed and submits them as a new task. A task left by an
+        earlier run never counts, as for a refusal: a resumed production re-polls those.
+        """
+        ours = proj_dir in self._submitted_projects
+        whose = "" if ours else " (a submission left by an earlier run)"
+        self._note_once(
+            ("submitfailed", proj_dir),
+            f"{exc}{whose}. Its jobs are reported failed and law will submit them as a new task.",
+        )
+        if not ours:
+            return
+        self._failed_submissions[proj_dir] = exc.failure
+        if len(self._failed_submissions) >= self.max_failed_submissions:
+            # recorded, not raised, for the reason given in `_refused`
+            said = "\n".join(
+                f"  {os.path.basename(p)}: {f or 'no failure message from the server'}"
+                for p, f in self._failed_submissions.items()
+            )
+            self.stop_reason = (
+                f"{len(self._failed_submissions)} submissions made by this run have failed on "
+                "the CRAB server (SUBMITFAILED), so whatever failed them is still there, and each "
+                "further task would spend a retry of every branch in it. The server said:\n"
+                + said
+            )
+
 
 class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
     """CRAB job file with no CRAB-side product/log transfer (DSProd owns remote I/O)."""
@@ -917,13 +1013,11 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
             c.crab.General.transferOutputs = False
             c.crab.General.transferLogs = False
             if getattr(c.crab, "JobType", None) is not None:
-                c.crab.JobType.sendPythonFolder = None
                 c.crab.JobType.outputFiles = None
                 c.crab.JobType.disableAutomaticOutputCollection = True
         c.output_files = []
         # the config-object tweaks above are not reflected in the already-written crab cfg, so
-        # rewrite it: strip the deprecated sendPythonFolder (rejected by modern CRAB) and force
-        # no CRAB-side transfers (DSProd owns remote I/O).
+        # rewrite it to force no CRAB-side transfers (DSProd owns remote I/O).
         try:
             self._rewrite_crab_job_file(job_file)
         except Exception as exc:
@@ -938,8 +1032,6 @@ class DSProdCrabJobFileFactory(law.cms.CrabJobFileFactory):
         skip_list = False
         for ln in lines:
             stripped = ln.strip()
-            if "sendPythonFolder" in ln:
-                continue
             if "General.transferOutputs" in ln:
                 new_lines.append("cfg.General.transferOutputs = False\n")
                 continue
@@ -1330,7 +1422,7 @@ class DSProdCrabWorkflowProxy(
                 f"VOMS proxy at {proxy} is expired. Run: "
                 "voms-proxy-init --voms cms -valid 192:00"
             )
-        kwargs = {"proxy": proxy}
+        kwargs = {"proxy_file": proxy}
         # CRABClient names the credential sha1(DN) and looks under no other name
         # (`CredentialInteractions.createNewMyProxy`), so one stored under the plain DN -- what a
         # bare `myproxy-init -d` leaves behind -- is invisible to the TaskWorker and must not
