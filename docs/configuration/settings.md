@@ -76,6 +76,7 @@ crab:
   # refill_fraction: 0.2            # optional; min wave size, as a fraction of parallel_jobs
   # retry_release_minutes: 45       # optional; release a parked retry after this long
   # auto_blacklist: { ... }         # optional; see Backends -> Failing sites (on by default)
+  # watchdog: { ... }               # optional; see Backends -> Stalled jobs (on by default)
 ```
 
 ### Cores and memory are asked for separately

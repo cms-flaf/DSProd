@@ -1604,12 +1604,10 @@ class CrabWorkflow(law.cms.CrabWorkflow):
         wrapper and by nothing else -- so a local or HTCondor run writes no flags, matching the
         driver side, which only watches CRAB.
         """
+        if "LAW_CRAB_JOB_NUMBER" not in os.environ or not self.is_branch():
+            return contextlib.nullcontext()
         cfg = watchdog_config(self._crab_cfg())
-        if (
-            not cfg["enabled"]
-            or not self.is_branch()
-            or "LAW_CRAB_JOB_NUMBER" not in os.environ
-        ):
+        if not cfg["enabled"]:
             return contextlib.nullcontext()
         return Heartbeat(
             self.heartbeat_target(self.branch).uri(),
