@@ -81,129 +81,191 @@ install_cmssw() {
   run_cmd $env_cmd $env_cmd_args /usr/bin/env -i HOME=$HOME bash "$this_file" install_cmssw $scram_arch $cmssw_version $target_os $inst_type
 }
 
-# The law release installed in a site-packages or `pip --target` directory, read off its dist-info
-# name without importing anything; empty when there is none. Fails when the directory cannot be
-# listed, so that storage which does not answer is never taken for an outdated install.
-_dsprod_law_in() {
-  local listing
-  listing="$(command ls -1 "$1")" || return 1
-  printf '%s\n' "$listing" | sed -n 's/^law-\(.*\)\.dist-info$/\1/p'
+# Prints what the marker .installed of the directory $1 records -- the pins env.sh built it from,
+# written as the last step of the build -- and nothing when it has no marker; returns 2, printing
+# nothing, when $1 does not exist. Whether $1 exists is read once, from a listing of its parent,
+# and the callers build, remove and replace on that answer alone: on storage that can answer one
+# lookup wrongly (EOS), a second check could find gone what the first found, and a directory built
+# from the pins would be removed. Fails -- so that storage which does not answer is never taken
+# for a build to be redone -- when the parent or $1 cannot be listed, when $1 is listed but is not
+# a directory, when it or its marker is not listed but is there all the same, and when its marker
+# cannot be read. The listings are read with literal names, whatever QUOTING_STYLE is exported,
+# and matched in the shell, so that no command that fails reads as a name not listed.
+_dsprod_installed() {
+  local listing nl=$'\n'
+  listing="$(QUOTING_STYLE=literal command ls -1A "${1%/*}")" || return 1
+  case "$nl$listing$nl" in
+    *"$nl${1##*/}$nl"*) ;;
+    *)
+      if [ -e "$1" ] || [ -L "$1" ]; then
+        echo "ERROR: $1 is there, but a listing of ${1%/*} does not show it." >&2
+        return 1
+      fi
+      return 2
+      ;;
+  esac
+  if ! [ -d "$1" ]; then
+    echo "ERROR: $1 is not a directory, or cannot be looked up." >&2
+    return 1
+  fi
+  listing="$(QUOTING_STYLE=literal command ls -1A "$1")" || return 1
+  case "$nl$listing$nl" in
+    *"$nl.installed$nl"*) command cat "$1/.installed" || return 1 ;;
+    *)
+      if [ -e "$1/.installed" ] || [ -L "$1/.installed" ]; then
+        echo "ERROR: $1/.installed is there, but a listing of $1 does not show it." >&2
+        return 1
+      fi
+      ;;
+  esac
 }
 
-# Fails inside a law batch job (law exports LAW_JOB_HOME before the bootstrap sources this file):
-# HTCondor jobs source the shared checkout's env.sh, and a pin pulled while they run would have
-# every job that starts delete and rebuild the environment the others are running from.
-_dsprod_may_rebuild() {
-  [ -z "$LAW_JOB_HOME" ] && return 0
-  echo "ERROR: $1 holds law ${2:-<none>}, DSProd needs $3, and a batch job does not rebuild what other jobs share. Source env.sh on the submitting machine first." >&2
-  return 1
-}
-
-# Fails inside a law batch job when a directory is missing or unfinished. A rebuild started on the
-# submitting machine leaves it so for a minute or two, and a job building it too would run venv
-# and pip into the same directory at once, which can leave a venv that is broken and still looks
-# finished.
+# Fails inside a law batch job (law exports LAW_JOB_HOME before the bootstrap sources this file).
+# HTCondor jobs source the shared checkout's env.sh: a pin pulled while they run would have every
+# job that starts delete and rebuild the environment the others are running from, and a job that
+# starts while env.sh rebuilds it on the submitting machine would run venv and pip into the same
+# directory at once, which can leave a venv that is broken and still looks finished.
 _dsprod_may_build() {
   [ -z "$LAW_JOB_HOME" ] && return 0
-  echo "ERROR: $1 is missing or unfinished, and a batch job does not build what other jobs share. Source env.sh on the submitting machine and resubmit; a job that starts while env.sh rebuilds it fails with this error and law retries it." >&2
+  echo "ERROR: $1 is missing, unfinished or built from other pins than env.sh installs (it records: ${2:-nothing}; env.sh installs: $3), and a batch job does not build what other jobs share. Source env.sh on the submitting machine and resubmit; a job that starts while env.sh rebuilds it fails with this error and is retried." >&2
   return 1
 }
 
-# lxplus: law + luigi in a venv on the SYSTEM python3.9, with --system-site-packages so law's
-# WLCG targets use the system gfal2 (+ its working http/Davix plugin for davs://). Self-contained,
-# avoids the LCG/gfal library conflicts. Built once, guarded by .installed (written last), and
-# rebuilt from scratch when it holds another law release than $2, which .installed does not tell.
-# The steps that must succeed before .installed is written are checked here rather than through
+# lxplus: the pinned packages in a venv on the SYSTEM python3.9, with --system-site-packages so
+# law's WLCG targets use the system gfal2 (+ its working http/Davix plugin for davs://).
+# Self-contained, avoids the LCG/gfal library conflicts. $2... are the pins, pip's first: the
+# venv's pip is upgraded to it and installs the rest. Marked finished last, by .installed recording
+# the pins, and built again from scratch when its marker is missing or records other pins.
+# The steps that must succeed before the marker is written are checked here rather than through
 # run_cmd: run_cmd stops the sourcing shell by interrupting it, and a shell that ignores SIGINT
 # -- any `cmd &` run where job control is off, such as from a script, `setsid nohup ... &`
 # included -- goes on past the failure.
 _dsprod_driver_env() {
-  local dsprod_env="$1" law_version="$2" site installed
-  if [ -f "$dsprod_env/.installed" ]; then
-    if ! site="$("$dsprod_env/bin/python3" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-        || ! installed="$(_dsprod_law_in "$site")"; then
-      echo "ERROR: cannot tell which law $dsprod_env holds, so it is left as it is. Remove it to rebuild it." >&2
+  # "$*" joins the pins with the first character of IFS, which the sourcing shell may have set
+  # to anything; the marker is written and compared with them joined by spaces
+  local IFS=' '
+  local dsprod_env="$1" installed exists=1
+  shift
+  installed="$(_dsprod_installed "$dsprod_env")"
+  case $? in
+    0) ;;
+    2) exists="" ;;
+    *)
+      echo "ERROR: cannot read which pins $dsprod_env was built from, so it is left as it is. Remove it to rebuild it." >&2
       return 1
-    fi
-    if [ "$installed" != "$law_version" ]; then
-      _dsprod_may_rebuild "$dsprod_env" "$installed" "$law_version" || return 1
-      echo "soft/dsprod_env holds law ${installed:-<none>}, DSProd needs $law_version: rebuilding it ..."
-      rm -rf "$dsprod_env" || {
-        echo "ERROR: cannot remove $dsprod_env to rebuild it. Remove it by hand and source env.sh again." >&2
-        return 1
-      }
-    fi
+      ;;
+  esac
+  if [ "$installed" = "$*" ]; then
+    source "$dsprod_env/bin/activate"
+    return
   fi
-  if [ ! -f "$dsprod_env/.installed" ]; then
-    _dsprod_may_build "$dsprod_env" || return 1
-    echo "Creating dsprod_env (law + luigi) ..."
-    /usr/bin/python3 -m venv --system-site-packages "$dsprod_env" || {
-      echo "ERROR: creating the venv $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+  _dsprod_may_build "$dsprod_env" "$installed" "$*" || return 1
+  if [ -n "$exists" ]; then
+    echo "soft/dsprod_env records ${installed:-no pins}, env.sh installs $*: rebuilding it ..."
+    rm -rf "$dsprod_env" || {
+      echo "ERROR: cannot remove $dsprod_env to rebuild it. Remove it by hand and source env.sh again." >&2
       return 1
     }
-    source "$dsprod_env/bin/activate"
-    run_cmd pip install --quiet --upgrade pip
-    # --ignore-installed, because --system-site-packages otherwise hides the problem: pip
-    # resolves luigi's own dependencies (typing_extensions, tenacity, ...) against lxplus's
-    # copies and leaves them out of the venv. An HTCondor worker image does not ship them, so
-    # law cannot be imported in the job and law_job.sh stops with the unhelpful "law not found
-    # ... should be made available in bootstrap file". The system packages are still there for
-    # what they are wanted for -- gfal2 is not a dependency of law or luigi.
-    pip install --quiet --ignore-installed luigi==3.7.3 "law==$law_version" || {
-      echo "ERROR: installing law + luigi into $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
-      return 1
-    }
-    touch "$dsprod_env/.installed"
-  else
-    source "$dsprod_env/bin/activate"
   fi
+  echo "Creating dsprod_env ($*) ..."
+  # created on its own, and never with -p: an entry already there, which the answer above did not
+  # show, stops the build rather than have venv build over it
+  mkdir "$dsprod_env" || {
+    echo "ERROR: cannot create the directory $dsprod_env for the venv; anything there is left as it is." >&2
+    return 1
+  }
+  /usr/bin/python3 -m venv --system-site-packages "$dsprod_env" || {
+    echo "ERROR: creating the venv $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+    return 1
+  }
+  source "$dsprod_env/bin/activate" || {
+    echo "ERROR: activating the new venv $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+    return 1
+  }
+  pip install --quiet --upgrade "$1" || {
+    echo "ERROR: installing $1 into $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+    return 1
+  }
+  # --ignore-installed, because --system-site-packages otherwise hides the problem: pip
+  # resolves the packages' own dependencies (typing_extensions, tenacity, ...) against lxplus's
+  # copies and leaves them out of the venv. An HTCondor worker image does not ship them, so
+  # law cannot be imported in the job and law_job.sh stops with the unhelpful "law not found
+  # ... should be made available in bootstrap file". The system packages are still there for
+  # what they are wanted for -- gfal2 is not a dependency of any of them.
+  pip install --quiet --ignore-installed "${@:2}" || {
+    echo "ERROR: installing the pinned packages into $dsprod_env failed; it is not marked finished, and the next source of env.sh builds it again." >&2
+    return 1
+  }
+  printf '%s\n' "$*" > "$dsprod_env/.installed" || {
+    echo "ERROR: cannot mark $dsprod_env finished; the next source of env.sh builds it again." >&2
+    return 1
+  }
 }
 
-# Vendor pure-python law + luigi (+ deps) so grid-worker jobs can ship them in the code tarball
-# (workers have no PyPI and a too-old system python), from the venv's pip; the compiled tornado
-# speedup is dropped so it stays arch-independent (pure-python fallback). Vendored again from
-# scratch when it holds another law release than $2: the driver's law renders the job scripts this
-# copy runs on the worker, and `pip --target` does not replace what is already there. Built in a
-# sibling directory and moved into place only once pip has succeeded: a `pip --target` cut short
-# can leave law's dist-info without the rest, which the next source would take for a finished
-# copy and CRAB would ship. An interrupted build leaves only that sibling, removed by the next one.
+# Vendor the pinned packages (+ their dependencies) pure-python, so grid-worker jobs can ship them
+# in the code tarball (workers have no PyPI and a too-old system python), with the venv's pip; the
+# compiled tornado speedup is dropped so it stays arch-independent (pure-python fallback). $2...
+# are the pins as _dsprod_driver_env takes them, and the copy records them in its own .installed:
+# it is vendored again from scratch when that records other pins, or none, since the driver's law
+# renders the job scripts this copy runs on the worker and `pip --target` does not replace what is
+# already there. Built and marked in a sibling directory, and moved into place only once both
+# have succeeded: a `pip --target` cut short leaves a half-filled copy, which CRAB would ship. An
+# interrupted build leaves only that sibling, removed by the next one.
 # Each step up to the last rename is checked here rather than through run_cmd, as in
 # _dsprod_driver_env: run_cmd does not stop a shell that ignores SIGINT.
 _dsprod_vendor() {
-  local vendor="$1" law_version="$2" installed="" building="$1.tmp.$$"
-  if [ -e "$vendor" ] && ! installed="$(_dsprod_law_in "$vendor")"; then
-    echo "ERROR: cannot tell which law $vendor holds, so it is left as it is. Remove it to vendor again." >&2
-    return 1
-  fi
-  if [ "$installed" = "$law_version" ]; then
+  # the pins joined by spaces in "$*", as in _dsprod_driver_env
+  local IFS=' '
+  local vendor="$1" installed exists=1 building="$1.tmp.$$"
+  shift
+  installed="$(_dsprod_installed "$vendor")"
+  case $? in
+    0) ;;
+    2) exists="" ;;
+    *)
+      echo "ERROR: cannot read which pins $vendor was built from, so it is left as it is. Remove it to vendor again." >&2
+      return 1
+      ;;
+  esac
+  if [ "$installed" = "$*" ]; then
     return 0
   fi
-  if [ -e "$vendor" ]; then
-    _dsprod_may_rebuild "$vendor" "$installed" "$law_version" || return 1
-    echo "soft/vendor holds law ${installed:-<none>}, DSProd needs $law_version: vendoring it again ..."
+  _dsprod_may_build "$vendor" "$installed" "$*" || return 1
+  if [ -n "$exists" ]; then
+    echo "soft/vendor records ${installed:-no pins}, env.sh installs $*: vendoring again ..."
   else
-    _dsprod_may_build "$vendor" || return 1
-    echo "Vendoring law + luigi into soft/vendor (for grid jobs) ..."
+    echo "Vendoring into soft/vendor (for grid jobs): $* ..."
   fi
-  find "${vendor%/*}" -maxdepth 1 -name "${vendor##*/}.tmp.*" -exec rm -rf {} + || {
+  # -H: soft/ may be a symlink, which find would otherwise not look into
+  find -H "${vendor%/*}" -maxdepth 1 -name "${vendor##*/}.tmp.*" -exec rm -rf {} + || {
     echo "ERROR: cannot remove what an unfinished vendoring left next to $vendor; $vendor is left as it was." >&2
     return 1
   }
-  pip install --quiet --target "$building" luigi==3.7.3 "law==$law_version" || {
-    echo "ERROR: vendoring law + luigi failed; $vendor is left as it was." >&2
+  pip install --quiet --target "$building" "${@:2}" || {
+    echo "ERROR: vendoring the pinned packages failed; $vendor is left as it was." >&2
     return 1
   }
   find "$building" -name "*.so" -delete 2> /dev/null
+  printf '%s\n' "$*" > "$building/.installed" || {
+    echo "ERROR: cannot mark the new vendored copy finished; $vendor is left as it was." >&2
+    return 1
+  }
   # the old copy is renamed aside rather than removed first, so that soft/vendor is missing only
   # between two renames rather than for as long as removing it takes
-  if [ -e "$vendor" ]; then
+  if [ -n "$exists" ]; then
     mv "$vendor" "$building.old" || {
       echo "ERROR: cannot move $vendor aside to replace it; it is left as it was." >&2
       return 1
     }
   fi
-  mv "$building" "$vendor" || {
-    echo "ERROR: cannot move the new vendored copy into $vendor, which is missing until env.sh is sourced again." >&2
+  # -T: an entry at $vendor, which the answer above did not show, stops the move rather than have
+  # the new copy moved into it
+  mv -T "$building" "$vendor" || {
+    if [ -n "$exists" ]; then
+      echo "ERROR: cannot move the new vendored copy into $vendor, which is missing until env.sh is sourced again." >&2
+    else
+      echo "ERROR: cannot move the new vendored copy into $vendor; anything there is left as it is." >&2
+    fi
     return 1
   }
   run_cmd rm -rf "$building.old"
@@ -241,11 +303,15 @@ action() {
     export PYTHONPATH="$this_dir/soft/vendor:$PYTHONPATH"
     echo "grid env: python3=$(command -v python3) ($(python3 --version 2>&1)), vendored law/luigi on PYTHONPATH"
   else
-    # the one law release DSProd runs with, on the driver and, vendored, on grid workers;
-    # dsprod/law_version.py refuses any other at import
-    local law_version="0.1.21"
-    _dsprod_driver_env "$this_dir/soft/dsprod_env" "$law_version" || return 1
-    _dsprod_vendor "$this_dir/soft/vendor" "$law_version" || return 1
+    # Everything env.sh installs with pip, each pinned to one release; their own dependencies are
+    # left to pip. pip itself comes first: the venv's pip is upgraded to it, and it installs the
+    # rest into the venv and, for the grid workers, into soft/vendor. Both record this list in
+    # their marker .installed and are built again whenever it changes.
+    local -a dsprod_pins=(pip==26.0.1 luigi==3.7.3 law==0.1.21)
+    # soft/ is listed to tell whether each of the two is there, and a fresh clone has none
+    mkdir -p "$this_dir/soft" || return 1
+    _dsprod_driver_env "$this_dir/soft/dsprod_env" "${dsprod_pins[@]}" || return 1
+    _dsprod_vendor "$this_dir/soft/vendor" "${dsprod_pins[@]}" || return 1
   fi
 
   if [ ! -z $ZSH_VERSION ]; then
