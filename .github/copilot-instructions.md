@@ -80,6 +80,31 @@ group, and a listing that *failed* is not an empty listing. `exists()` answers b
 parent and caching the result, so that distinction has to survive the listing itself: it does
 because `gfal_ls_checked` raises rather than returning "empty" when it cannot reach the endpoint.
 
+### Pinned installs
+
+Everything `env.sh` installs with `pip` is pinned in one list, `dsprod_pins` in `env.sh` (pip
+first, then the packages it installs into `soft/dsprod_env` and `soft/vendor`), and the
+`unit-tests` workflow installs the same pins; `test/test_env_install_pins.py` checks both. The pins
+change together with the code that needs them: `dsprod/crab.py` overrides law's CRAB job manager
+and its status parsing, which change between releases without an error (law 0.1.21 renamed `proxy`
+to `proxy_file` and began answering `WAITING on command SUBMIT` and `SUBMITFAILED` itself). Flag a
+diff that pins or installs a package of the list anywhere else, that changes a pin in `env.sh` or
+CI alone, or that adds a per-package probe or version check — in `env.sh`, at import, or as a
+version branch or `getattr`/`try` fallback that keeps another release working. Each of the two
+directories records the list in its marker `.installed`, written last, and is rebuilt from scratch
+when the marker is missing or records another list. Whether each directory exists is decided once,
+by `_dsprod_installed` from a listing of `soft/`, and its removal and replacement follow that answer
+alone; flag a second existence check (`[ -e ]`, `[ -d ]`) on either directory outside
+`_dsprod_installed`, or a match on a listing whose failure reads as "not listed". A listing,
+lookup or marker that fails or disagrees with itself stops `env.sh` and is never taken for a stale
+build. Inside a law batch job
+(`LAW_JOB_HOME` set) `env.sh` never builds or rebuilds either directory, and `soft/vendor` is
+filled and marked in a sibling directory and moved into place whole; flag a diff that lets a job
+build either, or that runs `pip --target` straight into `soft/vendor`. The steps that must succeed
+before either directory counts as finished check their own exit status rather than run through
+`run_cmd`, which does not stop a shell that ignores SIGINT (any `cmd &` from a script); flag a diff
+that moves one back.
+
 ### Registry and processes
 
 `dsprod/registry.py` and `dsprod/processes/` map a setup onto the steps that implement it. A
@@ -113,12 +138,13 @@ repository and needs its own PR.
 
 ## Repository facts
 
-Verified 2026-08-27; re-check before relying on any of it.
+Verified 2026-08-27 (layout and pins 2026-10-09); re-check before relying on any of it.
 
 | | |
 |---|---|
-| Layout | `dsprod/` (`tasks.py`, `run_step.py`, `registry.py`, `config.py`, `crab.py`, `gridpack_store.py`, `law_gfal.py`, `law_wlcg.py`, `grid_tools.py`, `site_stats.py`, `processes/`), `config/`, `run_tools/` (`check_conditions.py`, `apply_format.sh`), `docs/`, `env.sh`, `setup_gridpacks.sh` |
+| Layout | `dsprod/` (`tasks.py`, `run_step.py`, `registry.py`, `config.py`, `crab.py`, `gridpack_store.py`, `law_gfal.py`, `law_wlcg.py`, `grid_tools.py`, `site_stats.py`, `watchdog.py`, `tools.py`, `processes/`), `config/`, `run_tools/` (`check_conditions.py`, `apply_format.sh`), `docs/`, `env.sh`, `setup_gridpacks.sh` |
+| Pins | `dsprod_pins` in `env.sh`: pip 26.0.1, luigi 3.7.3, law 0.1.21; the same in the `unit-tests` workflow, which runs Python 3.12 (see "Pinned installs") |
 | Submodules | `models` (`cms-flaf/DSProdModels`), `genproductions_scripts` (CERN GitLab), `gridpacks` (`cms-flaf/DSProdGridpacks`, **sparse LFS — use `setup_gridpacks.sh`**) |
 | Configs | `config/global.yaml`, `config/conditions_Run3.yaml`, `config/law.cfg`. `config/user_custom.yaml` is the per-user override, layered on top of `global.yaml` and **gitignored** — a PR must never add it |
-| Workflows | `formatting-check`, `repo-sanity-checks`, `conditions-check` (also scheduled weekly), `deploy-docs` |
+| Workflows | `unit-tests`, `formatting-check`, `repo-sanity-checks`, `conditions-check` (also scheduled weekly), `deploy-docs` |
 | Docs | `docs/` with `mkdocs.yml`; verify with `mkdocs build --strict` |

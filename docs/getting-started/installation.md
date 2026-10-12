@@ -105,9 +105,73 @@ on `PATH` and no `ANALYSIS_PATH`, which surfaces as `task 'NanoMergeTask' not fo
 
 Sourcing `env.sh` sets up LAW and a Python/ROOT stack. It does **not** build CMSSW — the
 per-era releases are installed later, on demand, by the [`InstallCMSSW`](../concepts/tasks.md)
-task. The first time you source it on lxplus, `env.sh` also vendors a pure-python copy of
-`law`/`luigi` into `soft/vendor` (used by the [CRAB backend](../concepts/backends.md) on grid
-workers).
+task. The first time you source it on lxplus, `env.sh` builds the driver venv `soft/dsprod_env`
+and vendors a pure-python copy of `law`/`luigi` into `soft/vendor` (used by the
+[CRAB backend](../concepts/backends.md) on grid workers).
+
+### Pinned packages
+
+Everything `env.sh` installs with `pip` is pinned to one release, in a single list — `dsprod_pins`
+in `env.sh`: **pip 26.0.1**, **luigi 3.7.3** and **law 0.1.21**. pip comes first: the venv's own pip
+is upgraded to it, and it installs the rest into `soft/dsprod_env` and, for the grid workers, into
+`soft/vendor`. The dependencies of those packages are not pinned (there is no lock file): `pip`
+resolves them when a directory is built. The CI unit tests install the same pins. A pin is changed
+in `env.sh` together with the code that needs it — DSProd's CRAB layer overrides law's job manager
+and status parsing, which change between releases.
+
+Each of the two directories records the list it was built from in its marker `.installed`, written
+as the last step of its build. The next source of `env.sh` compares each marker with the list on
+its own: a directory whose marker matches is left as it is, and one whose marker is missing or
+records another list is **rebuilt** from scratch. Both are compared with the same list, so the
+vendored copy that CRAB workers receive matches what the driver renders their job scripts with.
+A rebuild takes a minute or two and needs PyPI. `soft/vendor` is filled and marked in a sibling
+directory and moved into place only once both have succeeded, so an interrupted build never leaves
+a half-filled copy where the CRAB code tarball is made from; the next source removes the leftover
+and starts again. The venv cannot be moved: it is rebuilt in place and marked last. If a step that
+either build depends on fails — installing a package, creating the venv, writing a marker, a
+rename — sourcing stops there with an `ERROR:` line and no `env.sh done!`, in a background shell
+too, and the next source tries again.
+
+A batch job never builds them: an HTCondor job that finds either directory missing, unfinished or
+built from another list stops with an error asking for `env.sh` to be sourced on the submitting
+machine, rather than run `venv` and `pip` into a directory that other jobs — or the rebuild itself
+— are using. Whether each directory exists is read once, from a listing of `soft/`, and building,
+removing or replacing it follows that one answer. If `env.sh` cannot list `soft/` or a directory,
+or read its marker — or finds an entry there that is not a directory, or a directory or marker that
+is there but not listed — it stops with an error and leaves the directory alone: source it again
+once the storage answers, or remove the directory by hand to rebuild it. A build that finds an entry
+where it creates the venv or moves the vendored copy stops in the same way, rather than build over
+it or into it.
+
+#### Upgrading an area in use
+
+A checkout that runs a production is upgraded in this order:
+
+1. **Stop the driver** — every `law run` that uses the checkout.
+2. **Empty its HTCondor queue**: remove its idle jobs (`condor_rm`), and remove its running ones
+   too or wait for them to end — a job that starts during the rebuild fails, and one running
+   through it can lose the venv it runs from. CRAB tasks may keep running: each carries its own
+   code tarball, vendored packages included.
+3. **Pull** the new DSProd and update its submodules, as in
+   [Clone the repository](#clone-the-repository).
+4. **Source `env.sh` once**, on the submitting machine, in one shell at a time: a second shell
+   sourcing it during the rebuild would remove the copy of `soft/vendor` the first is filling, and
+   rebuild the venv under it. It rebuilds whichever of `soft/dsprod_env` and `soft/vendor` was
+   built from another list and ends with `env.sh done!`. An area built before the markers existed
+   has none that matches — an empty `soft/dsprod_env/.installed`, none in `soft/vendor` — so the
+   first source after the pull rebuilds both.
+5. **Resume**: start the same `law run` again; it picks its submissions up where they stopped (see
+   [Resuming a production](../concepts/backends.md#resuming-a-production-both-batch-backends)).
+
+The order matters because between the pull and the rebuild the checkout holds the new code next to
+the old vendored packages. A CRAB workflow that builds its code tarball in that window ships both,
+and every job of the task runs the new code on the old vendored law, a combination nothing checks
+at run time. HTCondor jobs that start in the window, or during the rebuild, stop at `env.sh` with
+an error and are retried by law, each spending one of its retries.
+
+Going back to an older DSProd is not the same path in reverse: its `env.sh` accepts whatever
+`soft/dsprod_env` and `soft/vendor` hold, so it would run on the packages pinned here. Remove both
+directories before sourcing the older `env.sh`, so it builds its own.
 
 After sourcing you can list the available tasks:
 
