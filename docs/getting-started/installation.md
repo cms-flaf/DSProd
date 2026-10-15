@@ -201,9 +201,11 @@ where DSProd will look, whatever the shell already had.
 
 !!! warning "A run will renew the proxy itself — interactively"
     `RunProd` requires `CreateVomsProxy`, which treats a proxy with less than **24 hours** left as
-    unusable: it then **deletes** it and runs `voms-proxy-init … --valid 192:00`, which stops to ask
-    for your certificate passphrase. Start long productions with a fresh proxy so this does not
-    happen hours into a run. (`--CreateVomsProxy-time-limit` changes the threshold.)
+    unusable: it then runs `voms-proxy-init … --valid 192:00`, which stops to ask for your
+    certificate passphrase, and replaces the old proxy only once the new one exists. Without a
+    controlling terminal (`setsid`, CI) that renewal fails and the run stops, keeping the old
+    proxy; pass `--CreateVomsProxy-time-limit <hours>` to accept a shorter-lived proxy. Start long productions
+    with a fresh proxy so this does not happen hours into a run.
 
 !!! note "Inside a job the delegated proxy is used as-is"
     On a worker node DSProd takes whatever proxy the batch system put in `$X509_USER_PROXY` and
