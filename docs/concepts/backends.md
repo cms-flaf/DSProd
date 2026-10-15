@@ -112,8 +112,9 @@ crab:
     it transfers nothing; DSProd submits the fixed placeholder `T2_CH_CERN` +
     `/store/group/DSProd_crab_unused`, which CRAB accepts from every user (a `/store/user/<name>/`
     LFN is accepted only for the submitter's own CERN username, and the site must map the LFN for
-    writing). Nothing is ever written there, so there is nothing to configure and no second storage
-    area to keep in sync.
+    writing; the CRAB source behind each check is cited at `_CRAB_PLACEHOLDER_STAGEOUT` in
+    `dsprod/crab.py`). Nothing is ever written there, so there is nothing to configure and no
+    second storage area to keep in sync.
 
 ### Job waves
 

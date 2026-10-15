@@ -22,7 +22,10 @@ os.environ["ANALYSIS_PATH"] = dsprod_repo
 
 from law.job.base import JobInputFile  # noqa: E402
 
-from dsprod.crab import DSProdCrabJobFileFactory  # noqa: E402
+from dsprod.crab import (  # noqa: E402
+    _CRAB_PLACEHOLDER_STAGEOUT,
+    DSProdCrabJobFileFactory,
+)
 
 
 class TheSubmittedConfig(unittest.TestCase):
@@ -43,8 +46,8 @@ class TheSubmittedConfig(unittest.TestCase):
             arguments=["a", "b"],
             request_name="dsprod_test",
             work_area=self.dir,
-            storage_site="T3_CH_CERNBOX",
-            output_lfn_base="/store/user/someone/DSProd_crab_unused",
+            storage_site=_CRAB_PLACEHOLDER_STAGEOUT[0],
+            output_lfn_base=_CRAB_PLACEHOLDER_STAGEOUT[1],
             # what a production task would ask CRAB to bring back, were it allowed to
             output_files=["nano.root"],
             render_variables={},

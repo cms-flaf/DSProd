@@ -64,7 +64,7 @@ in `dsprod/crab.py`, never derived from configuration or the environment (`fs_de
 transfers nothing for DSProd, but the REST server refuses a `/store/user/<name>/` LFN whose `<name>` is
 not the submitter, and the task worker resolves the pair to a Rucio write PFN at the site
 (T3_CH_CERNBOX maps `/store/user/` only): a value built from either input fails for some submitter or
-some site.
+some site. The source of each check is cited at the constant.
 
 ### Resource requests come from three layers
 
