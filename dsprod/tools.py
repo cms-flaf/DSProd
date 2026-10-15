@@ -12,9 +12,9 @@ stable set of functions below is needed. Keep in sync with the originals:
 worker whose CRL for cms-auth.cern.ch is stale otherwise exits 1 on a usable
 proxy (2026-09-29). Keep the flag when re-syncing this copy.
 
-`CreateVomsProxy.run()` replaces the proxy only once its renewal has succeeded; the FLAF original
-removes it first, which leaves a run without a terminal with no proxy at all. Keep the order when
-re-syncing this copy.
+`CreateVomsProxy.run()` replaces the proxy only once its renewal has succeeded, as the FLAF original
+does from cms-flaf/FLAF#342 on; removing it first leaves a run without a terminal with no proxy at
+all. Keep that order when re-syncing this copy.
 
 Remote file I/O reuses FLAF's gfal-CLI file interface (dsprod/grid_tools.py +
 dsprod/law_gfal.py + dsprod/law_wlcg.py), so it works on grid (CRAB) workers where
