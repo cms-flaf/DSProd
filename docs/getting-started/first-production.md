@@ -58,8 +58,8 @@ the very first run, and minutes for every one after it.
 
 What happens, in order:
 
-1. **`CreateVomsProxy`** checks the proxy — and if under 24 hours are left, deletes it and
-   re-creates it, asking for your certificate passphrase.
+1. **`CreateVomsProxy`** checks the proxy — and if under 24 hours are left, creates a new one,
+   asking for your certificate passphrase, and replaces the old proxy only once the new one exists.
 2. **`InstallCMSSW`** builds the CMSSW releases the era needs (first run only; cached afterwards).
 3. **`ImportGridpack`** copies the M-800 gridpack from DSProdGridpacks to your storage area — when
    the store is checked out and holds that mass. Otherwise **`MakeGridpack`** generates one from

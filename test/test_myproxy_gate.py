@@ -9,6 +9,7 @@ TaskWorker will retrieve is whatever is already on myproxy.cern.ch -- and it is 
 sends a whole production out to fail on the TaskWorker instead of failing here in a second.
 """
 
+import inspect
 import os
 import sys
 import unittest
@@ -20,7 +21,9 @@ if dsprod_repo not in sys.path:
 
 os.environ["ANALYSIS_PATH"] = dsprod_repo
 
-from dsprod.crab import DSProdCrabWorkflowProxy  # noqa: E402
+import law  # noqa: E402
+
+from dsprod.crab import CrabWorkflow, DSProdCrabWorkflowProxy  # noqa: E402
 
 DAY = 24 * 3600
 HASHED = "8fdd8487bd5a4293015d1b24a6322b899a54b571"
@@ -55,7 +58,32 @@ class MyProxyGate(unittest.TestCase):
             encoded_timeleft=30 * DAY, plain_timeleft=None, proxy_file=self.proxy
         )
         self.assertEqual(kwargs["myproxy_username"], HASHED)
-        self.assertEqual(kwargs["proxy"], self.proxy)
+        self.assertEqual(kwargs["proxy_file"], self.proxy)
+
+    def test_returned_kwargs_are_accepted_by_the_crab_job_manager(self):
+        """law merges these into every submit, query, cancel and cleanup call it makes.
+
+        The methods take no `**kwargs`, so a key law does not know -- `proxy`, which law 0.1.21
+        renamed to `proxy_file` -- is a TypeError on every call, and the query path turns that into
+        "could not read the status" rather than into an error anyone would look at.
+        """
+        kwargs = gate(
+            encoded_timeleft=30 * DAY, plain_timeleft=None, proxy_file=self.proxy
+        )
+        calls = {
+            "submit": ("job.jdl",),
+            "query": ("/proj",),
+            "cancel": ("/proj",),
+            "cleanup": ("/proj",),
+        }
+        for method, args in calls.items():
+            with self.subTest(method):
+                signature = inspect.signature(
+                    getattr(law.contrib.cms.job.CrabJobManager, method)
+                )
+                extra = getattr(CrabWorkflow, f"crab_job_kwargs_{method}", None) or {}
+                bound = signature.bind(None, *args, **kwargs, **extra)
+                self.assertEqual(bound.arguments["proxy_file"], self.proxy)
 
     def test_fresh_plain_dn_credential_does_not(self):
         """The regression: a 30-day DN-keyed credential next to a 2-day hashed one."""

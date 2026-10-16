@@ -109,8 +109,12 @@ crab:
 !!! note "No CRAB output location"
     The `crab:` block holds **compute settings only**. Products go to `fs_default` — the same
     location as with any other backend. CRAB does demand a `storageSite`/`outLFNDirBase` even when
-    it transfers nothing; DSProd fills those in automatically as a submit-time formality, so there
-    is nothing to configure and no second storage area to keep in sync.
+    it transfers nothing; DSProd submits the fixed placeholder `T2_CH_CERN` +
+    `/store/group/DSProd_crab_unused`, which CRAB accepts from every user (a `/store/user/<name>/`
+    LFN is accepted only for the submitter's own CERN username, and the site must map the LFN for
+    writing; the CRAB source behind each check is cited at `_CRAB_PLACEHOLDER_STAGEOUT` in
+    `dsprod/crab.py`). Nothing is ever written there, so there is nothing to configure and no
+    second storage area to keep in sync.
 
 ### Job waves
 
@@ -255,15 +259,27 @@ not reached" with the cause long out of sight. The jobs of that last task are st
 failed, so law's own bookkeeping stays consistent whichever way the run ends.
 
 !!! note "`WAITING` is not a failure"
-    Every task now enters the CRAB database as `WAITING` and is promoted to `NEW` by a separate
-    scheduler, and law 0.1.20 does not know that status — so a perfectly healthy submission looked
-    unreadable for its first polls, costing the retry delay and a step towards
-    `max_unreadable_polls` each time. That is most visible when the TaskWorker is backlogged, i.e.
-    when several productions submit at once. `WAITING` is now read as "accepted, not yet
-    scheduled": the jobs stay pending and nothing is retried. The wait is still bounded — it is
-    repeated in the log while it lasts and stops the run after `max_unscheduled_polls` (60, five
+    Every task enters the CRAB database as `WAITING` — `crab status` prints `WAITING on command
+    SUBMIT` — and is promoted to `NEW` by a separate scheduler. That is most visible when the
+    TaskWorker is backlogged, i.e. when several productions submit at once. law reports the jobs of
+    such a task pending and polls on: nothing is retried and nothing counts towards
+    `max_unreadable_polls`. But law sets no limit on that wait, so DSProd still bounds it — the wait
+    is repeated in the log while it lasts and stops the run after `max_unscheduled_polls` (60, five
     hours at the default interval), because a task that never reaches a scheduler would otherwise
-    stall the production in silence.
+    stall the production in silence. Only `WAITING` is bounded; law's other pending states
+    (`NEW`, `HOLDING`, `QUEUED` on command `SUBMIT`, and `SUBMITTED`) are left to it.
+
+### A submission the server fails
+
+`SUBMITFAILED` is the TaskWorker or the schedd failing to submit a task, rather than refusing it.
+law reports every job of such a task **failed**, with the server's `Failure message from server`
+as the error (or `submission failed` when there is none), and submits them again as a new task —
+the right recovery for a TaskWorker that had a bad moment. A cause that stays, such as a MyProxy
+credential the TaskWorker cannot retrieve, fails every new task the same way, and each one spends a
+retry of every branch in it. So DSProd prints the server's message once per task and **stops the
+run at the second failed submission of this run**, quoting what the server said for each. As for
+refusals, a task is counted once however often it is polled, a task left by an earlier run never
+counts, and the jobs stay failed either way.
 
 ### Failing sites
 
