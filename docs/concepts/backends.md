@@ -513,10 +513,18 @@ done and the production simply waited.
 
 So each running CRAB job refreshes a flag file in **one flat directory** on `fs_watchdog`
 (`<output>/heartbeat/<task>_<run>/<branch>`), and the driver lists that directory once per interval
-— one remote call however many jobs are in flight, about 1.6 s at 3000 entries. A job whose flag
-has not moved for `missed_checks` intervals is rewritten as **failed** on that poll, which puts it
+— one remote call however many jobs are in flight, about 1.6 s at 3000 entries, and bounded at
+300 s because it runs inside the poll loop. A job whose flag, as of the latest listing, has not
+moved for `missed_checks` intervals is rewritten as **failed** on the next poll, which puts it
 through law's ordinary retry path: the attempt is counted and the branches go back to the wave gate
 like any other failure. There is no separate resubmission mechanism.
+
+Ages are measured at the time the listing was taken, not at the time of the status query that
+reads it. The status is queried on every poll but the listing is refreshed only once per
+interval, after that poll's queries, so measured against the query a healthy flag beaten just after
+a listing would read up to an interval older than it is. Beaten at 10:00 and 10:31 and listed at
+10:30:50 (which still shows 10:00), it would read 62 min old to a query at 11:02 — past the 60 min
+threshold, failing a healthy job.
 
 ```yaml
 fs_watchdog: davs://eoshome-k.cern.ch:8444/eos/user/k/kandroso/DSProd_watchdog/  # unset = fs_default
@@ -524,9 +532,17 @@ crab:
   watchdog: false          # switch it off entirely
   # or tune it:
   watchdog:
-    interval_minutes: 30   # refresh/check period
-    missed_checks: 2       # -> declared dead after 60 min of silence
+    interval_minutes: 30   # refresh/check period; at least 10
+    missed_checks: 2       # -> declared dead after 60 min of silence; at least 2
 ```
+
+A `--workflow crab` run refuses two values before anything is submitted, as it refuses any key it
+does not know. `missed_checks` below 2: just before its next beat a healthy flag reads up to one
+interval old, plus the time that beat takes to write and the minute the listing rounds its
+timestamp down to, so a threshold of a single interval condemns healthy jobs. And
+`interval_minutes` below 10: that slack does not shrink with the interval — a beat may take
+minutes to write — and a job writes its first flag only once its payload starts, so a short
+interval also shrinks the grace for that first beat below what a job takes to start up.
 
 `fs_watchdog` is optional and defaults to `fs_default`. There are two reasons to separate them: the
 flags are one small overwrite per job per interval on a single directory — a metadata load quite
@@ -539,6 +555,21 @@ and a `local` run has no slot to hold. Jobs detect this themselves — the heart
 when law's CRAB wrapper is what launched the job — so an HTCondor or local run writes no flags and
 the driver watches nothing.
 
+On the job, the flag is written by a thread beside the payload, and a failure to write or remove
+it never fails the payload. Each write is bounded at 300 s (never more than the interval), so a
+hanging copy cannot hold back the beats after it. A write that fails is retried after 60 s, then
+after twice as long on each further failure up to a quarter of an interval, and one success
+returns it to one beat per interval: the driver tolerates only `missed_checks` intervals, so a
+failed beat must not wait out a whole one, and thousands of jobs must not hammer a storage that is
+already failing. The flag is removed when the payload ends, however it ends; the removal is
+bounded the same way, and a failure is logged.
+
+Over `davs://` gfal implements the forced overwrite as a delete followed by a fresh upload. On
+storage that keeps deleted files (CERNBox, such as the `fs_watchdog` example above) every beat
+therefore leaves one entry in the recycle bin — about two per running job per hour at the default
+interval — and a beat that fails between the two leaves no flag until the next one succeeds, which
+the driver reads as a job on its way out (see below), not as a stall.
+
 !!! note "It abandons the job, it does not kill it"
     `crab kill` has no per-job form, and law's `cancel` ignores the ids it is given and kills the
     whole task — so condemning one job would take every healthy sibling with it. The branch is
@@ -549,18 +580,31 @@ the driver watches nothing.
     run end the whole workflow — so a watchdog that condemns healthy jobs is far worse than one
     that misses a stall. It issues nothing when the listing cannot be read (no listing is no
     evidence, and an outage must not accumulate staleness); nothing for a job too young to have
-    written its first flag; nothing beyond `max_per_interval` (5) in one pass; and nothing at all
-    when more than `max_stale_fraction` (0.5) of running jobs look stale, because writing to the
-    storage can break while reading it still works, and then every flag goes stale while every job
-    is healthy. A branch is rescued at most `max_per_branch` (1) times: one that stalls wherever it
-    runs is the branch's problem, not the slot's. `dry_run: true` logs the verdicts it would issue
-    and issues none.
+    written its first flag — one without a flag is given `missed_checks + 1` intervals (90 min by
+    default), counted like every age on the listings' clock, from the listing in force when it was
+    first seen running; nothing beyond `max_per_interval` (5) in one pass; and nothing at all
+    when more than `max_stale_fraction` (0.5) of the running jobs look stale while at least 10 are
+    running, because writing to the storage can break while reading it still works, and then
+    every flag goes stale while every job is healthy. With fewer running jobs the proportion says
+    nothing: that is the tail of a production, where the last stalled
+    jobs hold its completion — two stalled of two running was the incident above — so they get
+    their verdicts, and a storage fault during the tail costs each of those few jobs one attempt.
+    A branch is rescued at most `max_per_branch` (1) times: one that stalls wherever it runs is
+    the branch's problem, not the slot's. `dry_run: true` logs the verdicts it would issue, once
+    per job, and issues none.
 
     A flag that **was** there and is gone also produces no verdict: removing it is what a job does
     on its way out, and CRAB keeps reporting the job as running for minutes afterwards, so failing
     it then would resubmit a branch that had just been written. A worker that dies without exiting
     cleanly leaves its flag behind instead, and that is caught as a stale one — which is the shape
-    the incident this exists for actually had.
+    the incident this exists for actually had. The cost of this rule is a job that dies in the gap
+    a failed `davs://` beat leaves: it has no flag and is left to CRAB's wall-clock limit.
+
+    Nor is a flag older than the current attempt evidence. Flags are named by branch, so a worker
+    that died without removing its flag leaves one behind that would condemn the branch's next
+    attempt on the first poll that sees it running, before its own first beat.
+    Only flags written after the attempt was first seen running (less a minute for the listing's
+    resolution) count; until it writes one, the attempt is judged as a job without a flag.
 
 ### Why a job failed
 

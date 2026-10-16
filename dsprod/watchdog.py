@@ -56,6 +56,10 @@ DEFAULTS = {
 }
 
 
+#: shortest refresh interval accepted (see watchdog_config)
+MIN_INTERVAL_MINUTES = 10
+
+
 def watchdog_config(backend_cfg):
     """The `watchdog` block of a backend config, merged over the defaults."""
     raw = (backend_cfg or {}).get("watchdog", {})
@@ -69,9 +73,20 @@ def watchdog_config(backend_cfg):
             f"unknown watchdog setting(s) {sorted(unknown)}; known: {sorted(DEFAULTS)}"
         )
     cfg = dict(DEFAULTS, **raw)
-    if int(cfg["interval_minutes"]) < 1 or int(cfg["missed_checks"]) < 1:
+    # A healthy flag reads up to one interval, plus its write time (up to
+    # Heartbeat.write_timeout_seconds) and the minute the listing rounds down to, old just
+    # before its next beat; the threshold is missed_checks intervals. So one missed check
+    # condemns healthy jobs, and so do short intervals -- which also shrink the grace for a
+    # first beat, written only once the payload starts, below what a job takes to unpack.
+    if int(cfg["missed_checks"]) < 2:
         raise RuntimeError(
-            "watchdog.interval_minutes and watchdog.missed_checks must both be >= 1"
+            "watchdog.missed_checks must be >= 2: a healthy flag can read just over one "
+            "interval old before its next beat"
+        )
+    if int(cfg["interval_minutes"]) < MIN_INTERVAL_MINUTES:
+        raise RuntimeError(
+            f"watchdog.interval_minutes must be >= {MIN_INTERVAL_MINUTES}: a beat may take "
+            "minutes to write, and a job its first minutes to start the payload"
         )
     return cfg
 
@@ -84,6 +99,14 @@ class Heartbeat:
     storage hiccup that killed the payload would be far worse than a missed beat.
     """
 
+    #: how long one write (or the final removal) may take, and how soon a beat that failed is
+    #: tried again: the driver tolerates `missed_checks` intervals, so a failed beat must not
+    #: wait a whole interval more. Repeated failures back off, up to a quarter of an interval,
+    #: so that thousands of jobs do not hammer a storage that is already failing while an
+    #: attempt still falls shortly before the threshold.
+    write_timeout_seconds = 300
+    retry_seconds = 60
+
     def __init__(self, uri, interval_seconds, voms_token=None, label=None, log=None):
         self.uri = uri
         self.interval = max(1.0, float(interval_seconds))
@@ -93,6 +116,7 @@ class Heartbeat:
         self._stop = threading.Event()
         self._thread = None
         self._beats = 0
+        self._failures = 0
 
     def _write(self):
         # the driver only ever reads the modification time; the content is for a human looking at
@@ -108,21 +132,38 @@ class Heartbeat:
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(payload, f)
-            # force: gfal-copy does not overwrite, and an in-place overwrite is the signal -- a
-            # remove-then-copy would leave a window in which the flag is simply absent, which the
-            # driver cannot tell from a stalled job
-            gfal_copy(path, self.uri, voms_token=self.voms_token, force=True, verbose=0)
+            # force: gfal-copy refuses an existing destination otherwise, and the signal is the
+            # flag's modification time moving. Over davs gfal implements the overwrite as a
+            # delete and a fresh upload, so on storage that keeps deleted files (CERNBox) every
+            # beat leaves one entry in the recycle bin, and a beat that fails between the two
+            # leaves no flag until the next one -- read by the driver as a job on its way out.
+            # Bounded: a copy hanging longer would hold back every later beat.
+            gfal_copy(
+                path,
+                self.uri,
+                voms_token=self.voms_token,
+                force=True,
+                timeout=int(min(self.interval, self.write_timeout_seconds)),
+                verbose=0,
+            )
             self._beats += 1
         finally:
             os.unlink(path)
 
     def _loop(self):
         while True:
+            wait = self.interval
             try:
                 self._write()
+                self._failures = 0
             except Exception as exc:  # never let the heartbeat break the payload
                 self.log(f"heartbeat: could not refresh {self.uri}: {exc}")
-            if self._stop.wait(self.interval):
+                self._failures += 1
+                wait = min(
+                    self.retry_seconds * 2 ** min(self._failures - 1, 16),
+                    self.interval / 4,
+                )
+            if self._stop.wait(wait):
                 return
 
     def __enter__(self):
@@ -135,11 +176,15 @@ class Heartbeat:
         if self._thread is not None:
             self._thread.join(timeout=30)
         try:
-            gfal_rm(self.uri, voms_token=self.voms_token, verbose=0)
-        except Exception:
-            # a flag left behind is harmless: the driver only condemns jobs it is still polling,
-            # and the sweep collects flags whose job is gone
-            pass
+            gfal_rm(
+                self.uri,
+                voms_token=self.voms_token,
+                verbose=0,
+                timeout=int(min(self.interval, self.write_timeout_seconds)),
+            )
+        except Exception as err:
+            # a flag left behind must not fail a payload that has already finished
+            self.log(f"heartbeat: could not remove {self.uri}: {err}")
         return False
 
 
@@ -167,6 +212,9 @@ class StallWatchdog:
     state here is taken under one lock.
     """
 
+    #: running jobs below which a mostly-stale listing is not read as a storage fault
+    min_running_for_fault_guard = 10
+
     def __init__(self, flag_dir_uri, cfg=None, voms_token=None, publish=None):
         # may be a callable: resolving the uri builds the remote file system, which shells out to
         # `voms-proxy-info`, and this object is constructed alongside the job manager -- long
@@ -178,13 +226,16 @@ class StallWatchdog:
         self._lock = threading.Lock()
         self._ages = None  # branch name -> mtime, from the last listing that worked
         self._listed = False
-        self._first_running = {}  # (job_num, job_id) -> when we first saw it running
+        self._listed_at = None  # when the listing behind `_ages` was taken
+        # (crab_num, task_name) -> when first seen running, on the listing's clock (the
+        # grace for a first beat) and on the query's (which flags may be this attempt's)
+        self._first_running = {}
+        self._first_seen = {}
         self._per_branch = {}  # branch -> verdicts issued so far
         self._by_id = {}  # (crab_num, task_name) -> (job_num, branches)
         self._seen_flag = set()  # job ids a flag has ever been observed for
-        self._reported = (
-            set()
-        )  # messages already published, so a poll loop cannot repeat them
+        # messages already published, so a poll loop cannot repeat them
+        self._reported = set()
         self._issued_this_interval = 0
         self._listing_failures = 0
 
@@ -206,16 +257,31 @@ class StallWatchdog:
     def stale_seconds(self):
         return self.interval_seconds * int(self.cfg["missed_checks"])
 
-    def refresh(self):
-        """List the flag directory once. Returns False if the listing could not be read."""
+    #: bound on one listing of the flag directory, which runs inside the poll loop
+    listing_timeout_seconds = 300
+
+    def refresh(self, now=None):
+        """List the flag directory once. Returns False if the listing could not be read.
+
+        The time is taken before the listing: verdicts measure ages against it, not against
+        the clock at the time of a query. A listing is refreshed once per interval while the
+        queries that read it come every poll, so measured against the query a healthy flag,
+        beaten just after the listing, would look up to an interval older than it is -- past
+        the threshold just before the next refresh.
+        """
         if not self.enabled:
             return False
+        listed_at = now or datetime.datetime.utcnow()
         # catch_stderr: until a job writes its first flag the directory does not exist, so the
         # CLI's own "404 File not found" would be printed on every interval of every wave. The
         # outcome is reported here instead, once per transition, so a listing that starts failing
         # after it had been working -- the case worth noticing -- is not lost in that noise.
         entries = gfal_ls_safe(
-            self.flag_dir, voms_token=self.voms_token, catch_stderr=True, verbose=0
+            self.flag_dir,
+            voms_token=self.voms_token,
+            catch_stderr=True,
+            verbose=0,
+            timeout=self.listing_timeout_seconds,
         )
         with self._lock:
             self._issued_this_interval = 0
@@ -230,6 +296,7 @@ class StallWatchdog:
                     )
                 self._ages = None
                 self._listed = False
+                self._listed_at = None
                 return False
             if self._listing_failures:
                 self.publish(
@@ -241,12 +308,23 @@ class StallWatchdog:
                 e.name: e.date for e in entries if e.date is not None and not e.is_dir
             }
             self._listed = True
+            self._listed_at = listed_at
             return True
 
-    def _age(self, branches, now):
-        """Seconds since the freshest flag of `branches`, or None if none of them has one."""
+    #: slack for the minute resolution of listed modification times
+    _stamp_resolution = datetime.timedelta(seconds=60)
+
+    def _age(self, branches, now, since=None):
+        """Seconds since the freshest flag of `branches`, or None if none of them has one.
+
+        Flags older than `since` are ignored: flags are named by branch, so a flag left by an
+        earlier attempt of the same branch -- a worker that died without removing it -- is
+        not evidence about the attempt running now, and would condemn it on the first poll
+        that sees it running, before its own first beat. Ignoring a stamp only ever delays
+        evidence: a live job's next beat is newer than `since`.
+        """
         stamps = [self._ages.get(str(b)) for b in branches]
-        stamps = [s for s in stamps if s is not None]
+        stamps = [s for s in stamps if s is not None and (since is None or s >= since)]
         if not stamps:
             return None
         # a timestamp in the future (skew between driver and storage) counts as fresh
@@ -286,10 +364,13 @@ class StallWatchdog:
         """
         if not self.enabled:
             return {}
-        now = now or datetime.datetime.utcnow()
         with self._lock:
             if not self._listed or self._ages is None:
                 return {}
+            # every age, and the grace for a first beat, as of the listing (see refresh); which
+            # flags may belong to this attempt is decided on the clock it was seen running on
+            seen = now or datetime.datetime.utcnow()
+            now = now or self._listed_at or seen
             running, stale = [], []
             for job_id, data in result.items():
                 if not isinstance(data, dict) or data.get("status") != "running":
@@ -303,8 +384,13 @@ class StallWatchdog:
                 job_num, branches = known
                 key = self._key(job_id)
                 self._first_running.setdefault(key, now)
+                self._first_seen.setdefault(key, seen)
                 running.append(job_id)
-                age = self._age(branches, now)
+                age = self._age(
+                    branches,
+                    now,
+                    since=self._first_seen[key] - self._stamp_resolution,
+                )
                 # a job that has not had time to write its first flag is not evidence of anything
                 since_seen = (now - self._first_running[key]).total_seconds()
                 grace = self.stale_seconds + self.interval_seconds
@@ -329,9 +415,14 @@ class StallWatchdog:
             if not stale:
                 return {}
             # writing to the storage can break while reading it still works, and then every flag
-            # goes stale at once while every job is healthy
+            # goes stale at once while every job is healthy. With only a few jobs running that
+            # proportion says nothing, though: it is exactly the tail of a production, where
+            # the last jobs stall and hold its completion (598 of 600 done behind two), so the
+            # guard needs enough running jobs to read the proportion at all.
             fraction = float(self.cfg["max_stale_fraction"])
-            if running and len(stale) > max(1, int(fraction * len(running))):
+            if len(running) >= self.min_running_for_fault_guard and len(stale) > int(
+                fraction * len(running)
+            ):
                 self.publish(
                     f"watchdog: {len(stale)} of {len(running)} running jobs have a stale "
                     f"heartbeat -- reading that as a storage fault, not {len(stale)} dead jobs, "
@@ -369,7 +460,7 @@ class StallWatchdog:
                 if self.cfg.get("dry_run"):
                     # once per job, not once per poll: a dry run exists to be read
                     self._note(
-                        ("dry", key),
+                        ("dry", self._key(job_id)),
                         f"watchdog (dry run): would fail job {job_num} -- {reason}",
                     )
                     continue
@@ -391,5 +482,6 @@ class StallWatchdog:
         with self._lock:
             key = self._key(job_id)
             self._first_running.pop(key, None)
+            self._first_seen.pop(key, None)
             self._seen_flag.discard(key)
             self._reported -= {("gone", key), ("dry", key)}

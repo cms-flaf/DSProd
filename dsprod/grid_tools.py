@@ -108,9 +108,8 @@ def gfal_copy(
     """Copy `input_file` to `output_file`.
 
     Without `force` an existing destination is left alone -- `gfal-copy` does not overwrite, which
-    is why `gfal_copy_safe` clears the destination itself. `force` is for the one case that wants
-    an in-place overwrite and must not have a window where the file is absent: the watchdog
-    heartbeat, whose whole signal is the destination's modification time advancing.
+    is why `gfal_copy_safe` clears the destination itself. `force` overwrites it; over davs that is
+    a delete followed by an upload, so the file is briefly absent.
     """
     voms_token = get_voms_proxy_token(voms_token)
     try:
@@ -246,11 +245,14 @@ def gfal_copy_safe(
     )
 
 
-def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
+def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1, timeout=None):
     voms_token = get_voms_proxy_token(voms_token)
+    cmd = ["gfal-ls", "--long", "--all", "--time-style", "long-iso"]
+    if timeout is not None:
+        cmd += ["--timeout", str(int(timeout))]
     try:
         _, output, _ = ps_call(
-            ["gfal-ls", "--long", "--all", "--time-style", "long-iso", path],
+            cmd + [path],
             shell=False,
             env=gfal_env(voms_token),
             catch_stdout=True,
@@ -300,7 +302,7 @@ def gfal_ls_recursive(path, voms_token=None, verbose=1):
     return sorted(set(all_files), key=lambda f: f.full_name)
 
 
-def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
+def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1, timeout=None):
     """List `path`, or None if that did not work for any reason.
 
     Keeps the two apart only for callers that genuinely cannot act on the difference -- the
@@ -309,7 +311,11 @@ def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
     """
     try:
         return gfal_ls(
-            path, voms_token=voms_token, catch_stderr=catch_stderr, verbose=verbose
+            path,
+            voms_token=voms_token,
+            catch_stderr=catch_stderr,
+            verbose=verbose,
+            timeout=timeout,
         )
     except GfalError:
         return None
