@@ -59,6 +59,13 @@ payload as `transferring`, which law maps to finished, so `crab_check_job_comple
 verify the products first — and drops the cached listings as it does, so the verdict rests on a
 listing newer than the status it judges. Code that reintroduces either shortcut books work that was never done.
 
+CRAB's `Site.storageSite` / `Data.outLFNDirBase` are the fixed placeholder `_CRAB_PLACEHOLDER_STAGEOUT`
+in `dsprod/crab.py`, never derived from configuration or the environment (`fs_default`, `$USER`). CRAB
+transfers nothing for DSProd, but the REST server refuses a `/store/user/<name>/` LFN whose `<name>` is
+not the submitter, and the task worker resolves the pair to a Rucio write PFN at the site
+(T3_CH_CERNBOX maps `/store/user/` only): a value built from either input fails for some submitter or
+some site. The source of each check is cited at the constant.
+
 ### Resource requests come from three layers
 
 `max_runtime`, `memory` and `n_cpus` are resolved by luigi in one order: the command line, then the

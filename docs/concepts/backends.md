@@ -109,8 +109,12 @@ crab:
 !!! note "No CRAB output location"
     The `crab:` block holds **compute settings only**. Products go to `fs_default` — the same
     location as with any other backend. CRAB does demand a `storageSite`/`outLFNDirBase` even when
-    it transfers nothing; DSProd fills those in automatically as a submit-time formality, so there
-    is nothing to configure and no second storage area to keep in sync.
+    it transfers nothing; DSProd submits the fixed placeholder `T2_CH_CERN` +
+    `/store/group/DSProd_crab_unused`, which CRAB accepts from every user (a `/store/user/<name>/`
+    LFN is accepted only for the submitter's own CERN username, and the site must map the LFN for
+    writing; the CRAB source behind each check is cited at `_CRAB_PLACEHOLDER_STAGEOUT` in
+    `dsprod/crab.py`). Nothing is ever written there, so there is nothing to configure and no
+    second storage area to keep in sync.
 
 ### Job waves
 

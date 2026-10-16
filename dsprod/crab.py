@@ -69,9 +69,22 @@ def _strict_rel_path(anchor, *paths):
 
 law.contrib.cms.job.rel_path = _strict_rel_path
 
-#: site CRAB is told to stage out to. Never actually written to (stageout is disabled), but the
-#: submit-time check requires a site the user can write to; CERNBOX is the CERN-account default.
-_CRAB_DUMMY_SITE = "T3_CH_CERNBOX"
+#: CRAB's (Site.storageSite, Data.outLFNDirBase) for every task. CRAB transfers nothing for DSProd,
+#: so nothing is ever written there, but every component the pair passes through checks it (CRAB
+#: client crab-prod v3.260630.00 on cvmfs; dmwm/CRABServer at 30286f7):
+#:
+#: - law: both values non-empty (law/contrib/cms/job.py:691-694, law 0.1.21);
+#: - client: storageSite required only with transfers on (CRABClient/Commands/submit.py:307-310);
+#: - REST server: storageSite must look like a CMS site name (RESTUserWorkflow.py:339), and
+#:   checkOutLFN (RESTUserWorkflow.py:42-57,241 -> src/python/ServerUtilities.py:341-361, identical
+#:   to the client's lib/ServerUtilities.py:231-251 that the unit test loads) accepts
+#:   /store/user/<name>/ only for the submitter's CERN username and /store/group/<name>/ from anyone;
+#: - task worker: StageoutCheck returns early with both transfers off
+#:   (TaskWorker/Actions/StageoutCheck.py:82-87), but DagmanCreator resolves
+#:   <lfn>/<primaryds>/<request>/<timestamp>/0000 (DagmanCreator.py:94-127) to a Rucio write PFN at
+#:   the site for every task (DagmanCreator.py:682); T3_CH_CERNBOX maps /store/user/ LFNs only,
+#:   T2_CH_CERN any /store/ LFN (/cvmfs/cms.cern.ch/SITECONF/<site>/storage.json).
+_CRAB_PLACEHOLDER_STAGEOUT = ("T2_CH_CERN", "/store/group/DSProd_crab_unused")
 
 #: Site.whitelist used when the config sets none. It is NOT optional: DSProd jobs have no input
 #: dataset, so the config sets `Data.ignoreLocality`, and the CRAB client then refuses to submit
@@ -1563,11 +1576,11 @@ class CrabWorkflow(law.cms.CrabWorkflow):
     def crab_stageout_location(self):
         """CRAB demands a `Site.storageSite` + `Data.outLFNDirBase` even when it transfers nothing.
         DSProd disables CRAB stageout and writes every product to `fs_default` (the same location
-        as any other backend), so these are a submit-time formality and are filled in here rather
-        than configured — there is deliberately no separate CRAB output location.
+        as any other backend), so they carry a placeholder every submitter can use
+        (`_CRAB_PLACEHOLDER_STAGEOUT`) rather than being configured — there is deliberately no
+        separate CRAB output location.
         """
-        user = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
-        return _CRAB_DUMMY_SITE, f"/store/user/{user}/DSProd_crab_unused"
+        return _CRAB_PLACEHOLDER_STAGEOUT
 
     def crab_output_directory(self):
         return law.LocalDirectoryTarget(self.local_path())
