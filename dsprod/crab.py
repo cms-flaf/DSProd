@@ -1361,8 +1361,10 @@ class DSProdCrabWorkflowProxy(
         drops from `unsubmitted_jobs` every job whose branches all exist. On a fresh run such a
         job is also in `jobs` -- luigi's scheduling (process_resources) recorded it there as
         finished -- so dropped inside the loop it leaves the count one too high, and the loop
-        waits for a job that does not exist. law calls submit() right before poll(); a round
-        skipped below for an unreadable tree leaves the drop to the loop.
+        waits for a job that does not exist. A fresh run calls submit() right before poll(), but a
+        round skipped below for an unreadable tree leaves the drop to the loop. A resumed run is
+        not affected (ResyncExistingBranchesProxy clears the verdicts before law reloads `jobs`,
+        so law records such a job again before dropping it); the drop then only comes earlier.
         """
         for job_num, branches in list(self.job_data.unsubmitted_jobs.items()):
             if self._can_skip_job(job_num, branches):
