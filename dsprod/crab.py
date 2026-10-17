@@ -1354,6 +1354,26 @@ class DSProdCrabWorkflowProxy(
             return True
         return self._parked_retries_are_due()
 
+    def _drop_complete_backlog(self):
+        """Take out of the backlog the jobs law's submit() would pass by, as it does.
+
+        poll() fixes the job count, backlog included, once at its start, and law's submit()
+        drops from `unsubmitted_jobs` every job whose branches all exist. On a fresh run such a
+        job is also in `jobs` -- luigi's scheduling (process_resources) recorded it there as
+        finished -- so dropped inside the loop it leaves the count one too high, and the loop
+        waits for a job that does not exist. A fresh run calls submit() right before poll(), but a
+        round skipped below for an unreadable tree leaves the drop to the loop. A resumed run is
+        not affected (ResyncExistingBranchesProxy clears the verdicts before law reloads `jobs`,
+        so law records such a job again before dropping it); the drop then only comes earlier.
+        """
+        for job_num, branches in list(self.job_data.unsubmitted_jobs.items()):
+            if self._can_skip_job(job_num, branches):
+                del self.job_data.unsubmitted_jobs[job_num]
+
+    def poll(self):
+        self._drop_complete_backlog()
+        return super(DSProdCrabWorkflowProxy, self).poll()
+
     def submit(self, retry_jobs=None):
         # Before law is handed control: the job file is built inside law's submit(), and the
         # RuntimeError raised there for a tree that cannot be read is caught nowhere between it
