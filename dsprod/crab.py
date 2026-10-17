@@ -1381,12 +1381,17 @@ class DSProdCrabWorkflowProxy(
         # it did on two consecutive days (2026-09-08, 2026-09-09). What law popped out of
         # `unsubmitted_jobs` just before costs nothing: between that pop and the job file the only
         # dump is the one on the nothing-to-submit early return, so the backlog on disk is intact
-        # and a restart resumes. Skipping the round leaves every job where it was and the next
-        # poll, minutes away, submits it. Probed once rather than waited out, because this runs
-        # inside the poll loop. Skipping cannot hide a real outage for long: law dumps its job
-        # data before it submits within one poll iteration, so where that dump shares the storage
-        # law is installed on -- as it does in the production, both under `$ANALYSIS_PATH` -- one
-        # skip is published and the next iteration's dump ends the run.
+        # and a restart resumes. Skipping the round submits nothing and parks the retries law
+        # offers (below); the next poll, minutes away, hands them to the wave gate again. Probed
+        # once rather than waited out, because this runs inside the poll loop. Skipping cannot
+        # hide a real outage for long: law dumps its job data before it submits within one poll
+        # iteration, so where that dump shares the storage law is installed on -- as it does in
+        # the production, both under `$ANALYSIS_PATH` -- one skip is published and the next
+        # iteration's dump ends the run.
+        #
+        # The mass-retry brake comes first: a skipped round parks the retries below, and a mass
+        # retry released later from the backlog would no longer pass through it.
+        self.stop_on_mass_initial_retry(retry_jobs)
         missing = DSProdCrabJobFileFactory.missing_law_source(retries=1, delay=1.0)
         if missing is not None:
             reason = DSProdCrabJobFileFactory.law_source_error(missing)
@@ -1397,11 +1402,14 @@ class DSProdCrabWorkflowProxy(
                 "`klist -f` shows both the expiry and the renewable window, which a running "
                 "production only ever renews and never creates."
             )
+            # Left in `jobs`, an offered retry keeps its old CRAB job id: the next poll reads it
+            # FAILED again and law spends another of its retries on it, so a few skipped rounds
+            # would fail for good a job that ran once. Not dumped here, unlike the gate below: in
+            # the production the job data shares the storage that just blinked, and law's own dump
+            # at the next iteration writes the parking anyway.
+            self._park_retries(retry_jobs)
             return OrderedDict()
 
-        # explicitly, and before the wave gate: holding jobs back below returns without
-        # delegating to the mixin, which would let a mass retry through on a later wave
-        self.stop_on_mass_initial_retry(retry_jobs)
         retry_jobs = retry_jobs or OrderedDict()
         # before the gate is consulted, so that retries parked by an earlier poll or by a
         # previous driver are on the clock too, not only a generation parked right here
@@ -1421,26 +1429,32 @@ class DSProdCrabWorkflowProxy(
             return submitted
 
         # park retries as unsubmitted, so the next eligible wave picks them up as one larger
-        # CRAB task instead of creating a task for a handful of jobs now. `unsubmitted_jobs` is
-        # where they have to wait: it is dumped to disk and `JobData.__len__` counts it, so a
-        # killed driver finds them again and they stay part of the poll loop's `n_jobs` snapshot
-        # -- a dict on this proxy would orphan them and shrink the production's total
+        # CRAB task instead of creating a task for a handful of jobs now
         if retry_jobs:
-            parked = OrderedDict()
-            for job_num, branches in retry_jobs.items():
-                if self._can_skip_job(job_num, branches):
-                    continue
-                self.job_data.jobs.pop(job_num, None)
-                parked[job_num] = branches
-            if parked:
-                # in front of the backlog, because law's submit() fills up to `n_parallel` in dict
-                # order: a retry appended behind tens of thousands of never-submitted branches
-                # would not be reached for hours, and the release above could not get it out
-                parked.update(self.job_data.unsubmitted_jobs)
-                self.job_data.unsubmitted_jobs = parked
-                self._update_retry_release_clock()
+            self._park_retries(retry_jobs)
             self.dump_job_data()
         return OrderedDict()
+
+    def _park_retries(self, retry_jobs):
+        """Move offered retries from `jobs` to the front of `unsubmitted_jobs`.
+
+        `unsubmitted_jobs` is where they have to wait: it is dumped to disk and `JobData.__len__`
+        counts it, so a killed driver finds them again and they stay part of the poll loop's
+        `n_jobs` snapshot -- a dict on this proxy would orphan them and shrink the production's
+        total. In front of the backlog, because law's submit() fills up to `n_parallel` in dict
+        order: a retry appended behind tens of thousands of never-submitted branches would not be
+        reached for hours, and a release on the clock could not get it out.
+        """
+        parked = OrderedDict()
+        for job_num, branches in (retry_jobs or {}).items():
+            if self._can_skip_job(job_num, branches):
+                continue
+            self.job_data.jobs.pop(job_num, None)
+            parked[job_num] = branches
+        if parked:
+            parked.update(self.job_data.unsubmitted_jobs)
+            self.job_data.unsubmitted_jobs = parked
+            self._update_retry_release_clock()
 
     def setup_job_manager(self):
         """Gate submission on a valid VOMS proxy + a MyProxy credential the CRAB server needs."""
