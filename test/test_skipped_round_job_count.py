@@ -336,5 +336,25 @@ class TheAttemptsASkippedRoundSpends(_SkippedRoundCase):
         self.assertEqual(set(self.statuses().values()), {FINISHED})
 
 
+class TheMassRetryBrakeComesFirst(_SkippedRoundCase):
+    """A skipped round parks the retries law offers, and a mass retry released later from the
+    backlog would never be offered to the brake again: the brake has to judge it before the
+    tree is probed."""
+
+    def test_a_mass_retry_offered_while_the_tree_is_unreadable_stops_the_run(self):
+        data = JobData()
+        for num in (1, 2, 3):
+            data.jobs[num] = JobData.job_data(
+                job_id=f"{num}.0", branches=[num - 1], status=RUNNING
+            )
+        self.task.jobs_file.dump(data, formatter="json", indent=4)
+        self.proxy.process_resources()
+        # every live job reports finished and none left its output: law's first poll of a
+        # resumed run offers all three as "initially missing task outputs"
+        with self.assertRaisesRegex(Exception, "no longer have their outputs"):
+            self.run_with_tree(LAW_TREE)
+        self.assertEqual(self.submitted, [])
+
+
 if __name__ == "__main__":
     unittest.main()

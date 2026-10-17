@@ -1381,12 +1381,13 @@ class DSProdCrabWorkflowProxy(
         # it did on two consecutive days (2026-09-08, 2026-09-09). What law popped out of
         # `unsubmitted_jobs` just before costs nothing: between that pop and the job file the only
         # dump is the one on the nothing-to-submit early return, so the backlog on disk is intact
-        # and a restart resumes. Skipping the round leaves every job where it was and the next
-        # poll, minutes away, submits it. Probed once rather than waited out, because this runs
-        # inside the poll loop. Skipping cannot hide a real outage for long: law dumps its job
-        # data before it submits within one poll iteration, so where that dump shares the storage
-        # law is installed on -- as it does in the production, both under `$ANALYSIS_PATH` -- one
-        # skip is published and the next iteration's dump ends the run.
+        # and a restart resumes. Skipping the round submits nothing and parks the retries law
+        # offers (below); the next poll, minutes away, hands them to the wave gate again. Probed
+        # once rather than waited out, because this runs inside the poll loop. Skipping cannot
+        # hide a real outage for long: law dumps its job data before it submits within one poll
+        # iteration, so where that dump shares the storage law is installed on -- as it does in
+        # the production, both under `$ANALYSIS_PATH` -- one skip is published and the next
+        # iteration's dump ends the run.
         #
         # The mass-retry brake comes first: a skipped round parks the retries below, and a mass
         # retry released later from the backlog would no longer pass through it.
@@ -1403,7 +1404,9 @@ class DSProdCrabWorkflowProxy(
             )
             # Left in `jobs`, an offered retry keeps its old CRAB job id: the next poll reads it
             # FAILED again and law spends another of its retries on it, so a few skipped rounds
-            # would fail for good a job that ran once.
+            # would fail for good a job that ran once. Not dumped here, unlike the gate below: in
+            # the production the job data shares the storage that just blinked, and law's own dump
+            # at the next iteration writes the parking anyway.
             self._park_retries(retry_jobs)
             return OrderedDict()
 

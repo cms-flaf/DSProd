@@ -11,7 +11,8 @@ statements earlier are not the cost: the only dump between that pop and the job 
 law's nothing-to-submit early return, which is why a restart resumed both times.
 
 The round therefore has to be abandoned *before* law is handed control, which is what these tests
-pin: nothing submitted, nothing moved, and the next poll — minutes away — tries again.
+pin: nothing submitted, no job taken out of the backlog, and the next poll — minutes away — tries
+again.
 """
 
 import os
