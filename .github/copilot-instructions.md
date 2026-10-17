@@ -72,6 +72,9 @@ finished by luigi's scheduling (`process_resources`). `DSProdCrabWorkflowProxy.s
 round when law's tree is unreadable, so `poll()` drops those jobs first (`_drop_complete_backlog`):
 otherwise the loop waits for a job that does not exist. Code that changes the backlog between
 `run()` and `poll()` has to keep that count right.
+The same skipped round parks the retries law offers (`_park_retries`, as the wave gate does), after
+the mass-retry brake has judged them: a retry left in `jobs` keeps its old CRAB job id and every poll
+reads it failed again, spending one of its retries.
 
 ### Resource requests come from three layers
 

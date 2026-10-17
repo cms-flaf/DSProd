@@ -473,8 +473,11 @@ driver ends — which it did to a 16 000-branch production on two consecutive da
 
 The sources law needs are therefore probed **before** law is handed control. If they cannot be
 read, the submission round is abandoned: nothing is submitted, no job leaves the backlog, a message
-names the path, and the next poll — minutes away — submits normally. Only a tree that vanishes
-*inside* one submission still raises, from `create()`.
+names the path, and the next poll — minutes away — submits normally. Retries law offers in that
+round wait at the front of the backlog, as the wave gate parks them, and keep the attempt their
+failure cost: left in place, every skipped round would have read them failed again and spent one
+more of their `--retries`. Only a tree that vanishes *inside* one submission still raises, from
+`create()`.
 
 Nothing is lost by the crash either way: the jobs are still recorded as unsubmitted on disk, which
 is why restarting the driver resumes where it left off. The guard removes the interruption, not a

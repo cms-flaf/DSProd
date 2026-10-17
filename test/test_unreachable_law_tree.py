@@ -84,10 +84,11 @@ class WhenLawsTreeIsUnreachable(unittest.TestCase):
     PATH = "/eos/.../law/contrib/cms/crab/crab_wrapper.sh"
 
     def test_the_round_is_abandoned_before_law_is_handed_control(self):
-        """`stop_on_mass_initial_retry` is the first thing after the guard, so its not being
-        called is what proves law never got as far as moving any job."""
+        """law's own submit() is never reached. The mass-retry brake still judges the offered
+        retries first: the skipped round parks them, and a mass retry released later from the
+        backlog would no longer pass through it."""
         proxy, result, law_calls = run_submit(self.PATH)
-        proxy.stop_on_mass_initial_retry.assert_not_called()
+        proxy.stop_on_mass_initial_retry.assert_called_once()
         self.assertEqual(law_calls, [])
         self.assertEqual(result, OrderedDict())
 
