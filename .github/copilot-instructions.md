@@ -66,6 +66,13 @@ not the submitter, and the task worker resolves the pair to a Rucio write PFN at
 (T3_CH_CERNBOX maps `/store/user/` only): a value built from either input fails for some submitter or
 some site. The source of each check is cited at the constant.
 
+law's `poll()` fixes the job count (backlog included) once at its start, and law's `submit()` drops
+backlog jobs whose branches already exist; on a fresh run such a job is also in `jobs`, recorded
+finished by luigi's scheduling (`process_resources`). `DSProdCrabWorkflowProxy.submit` skips the
+round when law's tree is unreadable, so `poll()` drops those jobs first (`_drop_complete_backlog`):
+otherwise the loop waits for a job that does not exist. Code that changes the backlog between
+`run()` and `poll()` has to keep that count right.
+
 ### Resource requests come from three layers
 
 `max_runtime`, `memory` and `n_cpus` are resolved by luigi in one order: the command line, then the
